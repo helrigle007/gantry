@@ -2,6 +2,7 @@
 """Gantry kit: registry, user-level hooks, and the gantry command."""
 from __future__ import annotations
 
+import contextlib
 import glob
 import hashlib
 import json
@@ -219,8 +220,7 @@ def rebuild_registry():
         print("gantry: registry was unreadable; started empty")
 
 
-def save_registry(data):
-    path = registry_path()
+def write_json_atomic(path, data):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path))
     with os.fdopen(fd, "w") as handle:
@@ -231,18 +231,27 @@ def save_registry(data):
     os.replace(tmp, path)
 
 
-def update_registry(mutator):
-    path = registry_path()
+@contextlib.contextmanager
+def locked(path):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     lock = open(path + ".lock", "a+")
     try:
         if fcntl is not None:
             fcntl.flock(lock, fcntl.LOCK_EX)
+        yield
+    finally:
+        lock.close()
+
+
+def save_registry(data):
+    write_json_atomic(registry_path(), data)
+
+
+def update_registry(mutator):
+    with locked(registry_path()):
         data = load_registry()
         mutator(data)
         save_registry(data)
-    finally:
-        lock.close()
 
 
 def register(key, checkout):
@@ -349,16 +358,7 @@ def read_install_info():
 
 
 def write_install_info(source, ref):
-    path = install_info_path()
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    payload = {"version": VERSION, "source": source, "ref": ref}
-    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path))
-    with os.fdopen(fd, "w") as handle:
-        json.dump(payload, handle, indent=2)
-        handle.write("\n")
-        handle.flush()
-        os.fsync(handle.fileno())
-    os.replace(tmp, path)
+    write_json_atomic(install_info_path(), {"version": VERSION, "source": source, "ref": ref})
 
 
 def configured_source():
