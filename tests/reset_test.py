@@ -84,6 +84,13 @@ SETTLED = task(
     json.dumps({"body": "done pr=https://github.com/example-org/example-repo/pull/7 branch=feat/slug"}),
 )
 READY = task("task_b", "words", "pending", '["task_a"]')
+CHARTER = [
+    "gantry charter. Standing rules from the user. Follow every one, and copy the lines a task needs onto its brief's Charter line.",
+    "every repo:",
+    "- g-071c6d Never force-push a shared branch.",
+    "https://github.com/example-org/example-repo:",
+    "- r-ad322a Hey, always check the linked ticket",
+]
 
 
 def env_for(tmp, repo, fixture_path, mode="compact", threshold=300000):
@@ -399,10 +406,81 @@ def test_launcher_compact_and_restart():
         assert "Next: Start ready tasks: task_b." in open(handoff).read()
 
 
+def add_rules(repo, env):
+    for args in (["--global", "Never force-push a shared branch."], ["Hey, always check the linked ticket"]):
+        proc = launch(repo, env, "charter", "add", *args)
+        assert proc.returncode == 0, proc.stderr
+
+
+def session_start(source):
+    return {
+        "hook_event_name": "SessionStart",
+        "source": source,
+        "session_id": "sess",
+        "transcript_path": "",
+        "agent_type": "gantry-coordinator",
+    }
+
+
+def test_handoff_keeps_the_charter_past_the_cap():
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = os.path.join(tmp, "repo")
+        filler = [task(f"task_fill_{n:03d}", "filler " + "x" * 80, "completed", []) for n in range(200)]
+        path = save_fixture(tmp, fixture([SETTLED, READY, *filler], [], []))
+        env = env_for(tmp, repo, path)
+        add_rules(repo, env)
+        saved = os.environ.copy()
+        os.environ.update(env)
+        try:
+            _state, handoff = run.refresh(repo)
+        finally:
+            os.environ.clear()
+            os.environ.update(saved)
+        lines = handoff.splitlines()
+        assert len(handoff) <= run.HANDOFF_CAP, len(handoff)
+        assert "task_fill_199" not in handoff
+        assert lines[-1] == "Next: Start ready tasks: task_b.", lines[-1]
+        assert lines[-1 - len(CHARTER):-1] == CHARTER, lines[-8:]
+        assert handoff.count(CHARTER[0]) == 1
+
+
+def test_plain_startup_and_clear_inject_only_the_charter():
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = os.path.join(tmp, "repo")
+        path = save_fixture(tmp, fixture([SETTLED, READY], [], []))
+        env = env_for(tmp, repo, path)
+        add_rules(repo, env)
+        stale = os.path.join(tmp, "gantry-mailbox", "run_other")
+        os.makedirs(stale)
+        with open(os.path.join(stale, "handoff.md"), "w") as handle:
+            handle.write("gantry handoff.\nrun run_other\nNext: Start ready tasks: task_z.\n")
+        for source in ("startup", "clear"):
+            proc = hook(repo, env, {**session_start(source), "cwd": repo})
+            assert proc.returncode == 0, proc.stderr
+            injected = json.loads(proc.stdout)["hookSpecificOutput"]["additionalContext"]
+            assert injected == "\n".join(CHARTER), injected
+            assert "run run_fixture" not in injected
+        worker = hook(repo, env, {**session_start("startup"), "cwd": repo, "agent_type": "claude"})
+        assert worker.stdout == ""
+
+
+def test_failed_compact_falls_back_to_the_charter():
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = os.path.join(tmp, "repo")
+        env = env_for(tmp, repo, os.path.join(tmp, "missing.json"))
+        add_rules(repo, env)
+        proc = hook(repo, env, {**session_start("compact"), "cwd": repo})
+        assert proc.returncode == 0, proc.stderr
+        assert json.loads(proc.stdout)["hookSpecificOutput"]["additionalContext"] == "\n".join(CHARTER), proc.stdout
+
+
 if __name__ == "__main__":
     test_projection_keeps_what_the_coordinator_acts_on()
     test_reset_matches_the_unreset_next_step()
     test_inflight_worker_and_open_gate_outrank_ready_tasks()
     test_hooks_stay_quiet_until_restart_threshold()
     test_launcher_compact_and_restart()
-    print("5/5 passed")
+    test_handoff_keeps_the_charter_past_the_cap()
+    test_plain_startup_and_clear_inject_only_the_charter()
+    test_failed_compact_falls_back_to_the_charter()
+    print("8/8 passed")

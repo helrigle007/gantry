@@ -15,8 +15,8 @@ from dataclasses import dataclass
 BASH = "/usr/bin/bash"
 BASH_PREFIX = "GNU bash, version 5.2.21"
 PYTHON_VERSIONS = ("3.12.3", "3.11")
-SYNC_COMMIT = "563cbc261f34c4fa645d3ede28ff21ce250b1498"
-SYNC_BLOB = "81f5cabc47a2520dbb6f1b56669481f5a103391b"
+SYNC_COMMIT = "039bd7b3e462bbc98abf0237e4e09ef19a5dd197"
+SYNC_BLOB = "64713619ef6c7b2d34c68fe721544c021e7d7c66"
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 GUARD_PATH = os.path.join(ROOT, "template", "kit", "gantry-guard.py")
 KIT_PATH = os.path.join(ROOT, "template", "kit", "gantry_kit.py")
@@ -128,8 +128,12 @@ PROPS = {
         "A corrupt registry would police a repo with no config, or would ignore a repo that has one.",
     ),
     "worker-gantry": (
-        "A worker cannot run gantry or gantry_kit.py. The coordinator may run gantry overlap and nothing else under gantry.",
-        "A worker would uninstall the kit or record an overlap verdict.",
+        "A worker cannot run gantry or gantry_kit.py. The coordinator may run gantry overlap and gantry charter, and nothing else under gantry.",
+        "A worker would uninstall the kit, record an overlap verdict, or rewrite the user's charter.",
+    ),
+    "worker-home-write": (
+        "A worker is denied Edit, Write, MultiEdit, and NotebookEdit of $HOME/.gantry and every path under it, written absolute or with a leading ~. Read and cat of those paths stay allowed.",
+        "A worker would rewrite the user's charter, the registry, or the installed guard.",
     ),
     "pre-pr": (
         "gh pr create, gh pr new, and a POST to repos/<owner>/<repo>/pulls are denied until the worker's pre-pr overlap check is cleared, and the coordinator cannot open a PR.",
@@ -330,8 +334,19 @@ MUTATIONS = {
     "worker-gantry": (
         ["worker-gantry"],
         [(
-            "def check_gantry(ctx, args):\n    need(ctx.role == \"coordinator\" and args[:1] == [\"overlap\"], \"only the coordinator runs gantry, and only gantry overlap\")\n",
+            "def check_gantry(ctx, args):\n    need(ctx.role == \"coordinator\" and coord_gantry(args), \"only the coordinator runs gantry, and only gantry overlap or gantry charter\")\n",
             "def check_gantry(ctx, args):\n    return\n",
+        )],
+    ),
+    "coord-charter": (
+        ["worker-gantry"],
+        [('COORD_GANTRY = ("overlap", "charter")', 'COORD_GANTRY = ("overlap",)')],
+    ),
+    "worker-home-write": (
+        ["worker-home-write"],
+        [(
+            "    need(not PROTECTED_PATH.search(path) and not in_gantry_home(path), PROTECTED_MSG)\n",
+            "    need(not PROTECTED_PATH.search(path), PROTECTED_MSG)\n",
         )],
     ),
     "drop-compound": (
@@ -1114,6 +1129,7 @@ def table_checks(guard, paths):
     failures += expect(guard, paths, "coordinator-no-push", "coord-c", "coord", "Bash", {"command": f"git -C {shlex.quote(paths['wt'])} push origin feat"}, False)
     failures += activation_checks(guard, paths)
     failures += gantry_checks(guard, paths)
+    failures += home_write_checks(guard, paths)
     failures += pre_pr_checks(guard, paths)
     return failures
 
@@ -1167,20 +1183,53 @@ def activation_checks(guard, paths):
 def gantry_checks(guard, paths):
     prop = "worker-gantry"
     failures = []
-    denied = [
-        ("worker", "gantry overlap --checkpoint scoped --intent x --files a.py"),
-        ("worker", "gantry uninstall"),
-        ("worker", "gantry overlap --record classified --checkpoint pre-pr --run run_1 --task task_impl --verdict continue"),
-        ("worker", "python3 /opt/gantry_kit.py uninstall"),
-        ("coord", "gantry uninstall"),
-        ("coord", "python3 /opt/gantry_kit.py uninstall"),
+    rows = [
+        ("worker", "worker", "gantry overlap --checkpoint scoped --intent x --files a.py", False),
+        ("worker", "worker", "gantry uninstall", False),
+        ("worker", "worker", "gantry overlap --record classified --checkpoint pre-pr --run run_1 --task task_impl --verdict continue", False),
+        ("worker", "worker", "python3 /opt/gantry_kit.py uninstall", False),
+        ("worker", "worker", "gantry charter add 'Always check the linked ticket'", False),
+        ("worker", "worker", "gantry charter add --global 'Never force-push a shared branch.'", False),
+        ("worker", "worker", "gantry charter rm r-fc5233", False),
+        ("worker", "worker", "gantry charter list", False),
+        ("worker", "worker", "python3 /opt/gantry_kit.py charter add x", False),
+        ("coord", "coord", "gantry uninstall", False),
+        ("coord", "coord", "python3 /opt/gantry_kit.py uninstall", False),
+        ("coord", "coord", "gantry restart", False),
+        ("coord", "coord", "gantry --global charter add x", False),
+        ("coord-overlap", "coord", "gantry overlap --checkpoint scoped --intent x --files a.py", True),
+        ("coord-charter", "coord", "gantry charter add 'Always check the linked ticket'", True),
+        ("coord-charter", "coord", "gantry charter add 'Always run the team'\\''s lint before a PR'", True),
+        ("coord-charter", "coord", "gantry charter add --global 'Never force-push a shared branch.'", True),
+        ("coord-charter", "coord", "gantry charter list", True),
+        ("coord-charter", "coord", "gantry charter rm r-fc5233", True),
     ]
-    for role, command in denied:
-        failures += expect(guard, paths, prop, role, role, "Bash", {"command": command}, False)
-    failures += expect(
-        guard, paths, prop, "coord-overlap", "coord", "Bash",
-        {"command": "gantry overlap --checkpoint scoped --intent x --files a.py"}, True,
-    )
+    for where, role, command, allow in rows:
+        failures += expect(guard, paths, prop, where, role, "Bash", {"command": command}, allow)
+    return failures
+
+
+def home_write_checks(guard, paths):
+    prop = "worker-home-write"
+    root = os.path.join(paths["home"], ".gantry")
+    failures = []
+    rows = [
+        ("worker", "worker", "Write", {"file_path": f"{root}/charters/global.json"}, False, {}),
+        ("worker-tilde", "worker", "Edit", {"file_path": f"~/.gantry/charters/repos/github.com/{FIXTURE_SLUG}.json"}, False, {}),
+        ("worker", "worker", "MultiEdit", {"file_path": f"{root}/registry.json"}, False, {}),
+        ("worker-tilde", "worker", "NotebookEdit", {"notebook_path": "~/.gantry/charters/n.ipynb"}, False, {}),
+        ("worker", "worker", "Write", {"file_path": f"{root}/current/kit/gantry-guard.py"}, False, {}),
+        ("worker-root", "worker", "Write", {"file_path": root}, False, {}),
+        ("ship", "ship", "Write", {"file_path": f"{root}/charters/global.json"}, False, {}),
+        ("worker", "worker", "Write", {"file_path": "src/a.py"}, True, {}),
+        ("sibling", "worker", "Write", {"file_path": f"{root}-notes/a.md"}, True, {}),
+        ("read", "worker", "Read", {"file_path": f"{root}/charters/global.json"}, True, {}),
+        ("cat", "worker", "Bash", {"command": "cat ~/.gantry/charters/global.json"}, True, {}),
+        ("operator", "operator", "Write", {"file_path": f"{root}/charters/global.json"}, True, {}),
+        ("dormant", "worker", "Write", {"file_path": f"{root}/charters/global.json"}, True, {"mode": "unregistered"}),
+    ]
+    for where, role, tool, tool_input, allow, opts in rows:
+        failures += expect(guard, paths, prop, where, role, tool, tool_input, allow, **opts)
     return failures
 
 

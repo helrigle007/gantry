@@ -39,7 +39,7 @@ COORD_NO = "gantry coordinator never writes code or edits files; dispatch a work
 SUBAGENT_MSG = "gantry coordinator never spawns subagents (Agent or Task); parallel work belongs to Orca workers"
 SUBAGENT_TOOLS = {"Agent", "Task"}
 ORCH_MSG = "Orca is the only orchestrator; never route to pstack Orchestrate"
-PROTECTED_MSG = "gantry guard, mailbox, run hook, settings, config, coordinator agent and .git/ are off limits; ask the operator to change them"
+PROTECTED_MSG = "gantry guard, mailbox, run hook, settings, config, coordinator agent, ~/.gantry and .git/ are off limits; ask the operator to change them"
 ORCH_RE = re.compile(r"skills/poteto-mode/playbooks/orchestrate\.md|/skills/poteto-mode/scripts/orch/")
 PROTECTED_FILES = r"(?:\.claude/(?:hooks/gantry-guard\.py|bin/gantry-mailbox|bin/gantry_run\.py|bin/gantry_run/.*|settings(?:\.local)?\.json|gantry\.json|agents/gantry-coordinator\.md)|\.gantry(?:/|$)|agents/gantry-coordinator\.md)"
 PROTECTED_PATH = re.compile(rf"/{PROTECTED_FILES}$|/\.git(?:/|$)")
@@ -846,8 +846,13 @@ def deny_source(_ctx, _args):
     deny("source and . run a file the guard does not read; run the commands directly")
 
 
+COORD_GANTRY = ("overlap", "charter")
+
+def coord_gantry(args):
+    return bool(args) and args[0] in COORD_GANTRY
+
 def check_gantry(ctx, args):
-    need(ctx.role == "coordinator" and args[:1] == ["overlap"], "only the coordinator runs gantry, and only gantry overlap")
+    need(ctx.role == "coordinator" and coord_gantry(args), "only the coordinator runs gantry, and only gantry overlap or gantry charter")
 
 def launcher_args(argv):
     for index, token in enumerate(argv):
@@ -953,7 +958,7 @@ COORD_BASH = {
     "sort": lambda a: not any(x.startswith(("-o", "--output")) for x in a),
     "uniq": lambda a: len([x for x in a if not x.startswith("-")]) <= 1,
     "orca": ANY, "gantry-mailbox": ANY,
-    "gantry": lambda a: a[:1] == ["overlap"],
+    "gantry": coord_gantry,
     "gh": lambda a: tuple(parse_opts(a, GH_VALUED)[1][:2]) in COORD_GH,
 }
 
@@ -1004,9 +1009,13 @@ def check_bash(ctx, inp):
     for seg in parsed:
         check_segment(ctx, seg)
 
+def in_gantry_home(path):
+    root = os.path.realpath(kit.home())
+    return path == root or path.startswith(root + os.sep)
+
 def check_write(ctx, inp):
-    path = os.path.realpath(os.path.join(ctx.cwd, inp.get("file_path") or inp["notebook_path"]))
-    need(not PROTECTED_PATH.search(path), PROTECTED_MSG)
+    path = os.path.realpath(os.path.join(ctx.cwd, os.path.expanduser(inp.get("file_path") or inp["notebook_path"])))
+    need(not PROTECTED_PATH.search(path) and not in_gantry_home(path), PROTECTED_MSG)
 
 def check_read(ctx, inp):
     need(not ORCH_RE.search(inp["file_path"]), ORCH_MSG)

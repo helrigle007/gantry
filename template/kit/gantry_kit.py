@@ -2,6 +2,7 @@
 """Gantry kit: registry, user-level hooks, and the gantry command."""
 from __future__ import annotations
 
+import contextlib
 import glob
 import hashlib
 import json
@@ -14,13 +15,14 @@ import sys
 sys.dont_write_bytecode = True
 import tempfile
 import time
+from dataclasses import dataclass
 
 try:
     import fcntl
 except ImportError:  # pragma: no cover
     fcntl = None
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 AGENT_NAME = "gantry-coordinator"
 HOOK_MARK = ".gantry/current/kit/"
 RUN_EVENTS = ("PreCompact", "SessionStart", "UserPromptSubmit")
@@ -32,6 +34,9 @@ USAGE = """usage: gantry install [repo] [--repair]
        gantry doctor [repo]
        gantry overlap --checkpoint <scoped|pre-pr> --intent <text> --files <a,b> [--run <id> --task <id>]
        gantry overlap --record <gathered|classified|answered> --checkpoint <name> --run <id> --task <id> [--verdict <continue|stop>] [--answer <proceed|hold>]
+       gantry charter add [--global] '<rule>'
+       gantry charter list
+       gantry charter rm <id>
        gantry restart
        gantry --version
        gantry [objective]"""
@@ -68,10 +73,32 @@ PROBE = [
      "Shipping merges only the head commit it verified",
      "allow `gh pr merge` when it carries `--match-head-commit`"),
 ]
+NO_ORIGIN = "no origin remote in {repo}"
+BAD_ORIGIN = "origin {url} is not a parseable git remote. Expected https://host/owner/repo or git@host:owner/repo"
+GLOBAL = "global"
+CHARTER_CAP = 3000
+TEXT_CAP = 1000
+RULE_ID = re.compile(r"(?P<kind>[gr])-[0-9a-f]{6,64}")
+CHARTER_HEADER = (
+    "gantry charter. Standing rules from the user. "
+    "Follow every one, and copy the lines a task needs onto its brief's Charter line."
+)
+OVERFLOW_LINE = "- {count} more rules; run gantry charter list"
+UNREADABLE_LINE = "- unreadable; run gantry doctor"
 
 
 class RegistryError(Exception):
     pass
+
+
+class CharterError(Exception):
+    pass
+
+
+@dataclass(frozen=True)
+class Section:
+    scope: str
+    rules: dict | None
 
 
 def die(message):
@@ -219,8 +246,7 @@ def rebuild_registry():
         print("gantry: registry was unreadable; started empty")
 
 
-def save_registry(data):
-    path = registry_path()
+def write_json_atomic(path, data):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path))
     with os.fdopen(fd, "w") as handle:
@@ -231,18 +257,27 @@ def save_registry(data):
     os.replace(tmp, path)
 
 
-def update_registry(mutator):
-    path = registry_path()
+@contextlib.contextmanager
+def locked(path):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     lock = open(path + ".lock", "a+")
     try:
         if fcntl is not None:
             fcntl.flock(lock, fcntl.LOCK_EX)
+        yield
+    finally:
+        lock.close()
+
+
+def save_registry(data):
+    write_json_atomic(registry_path(), data)
+
+
+def update_registry(mutator):
+    with locked(registry_path()):
         data = load_registry()
         mutator(data)
         save_registry(data)
-    finally:
-        lock.close()
 
 
 def register(key, checkout):
@@ -298,10 +333,14 @@ def look(start, warn=False):
     return Governed(os.path.dirname(common), common, key, read_config(common))
 
 
-def governing(project_dir=None, cwd=None, warn=False):
+def governing_start(project_dir, cwd):
     if project_dir and git_stdout(project_dir, "rev-parse", "--path-format=absolute", "--git-common-dir"):
-        return look(project_dir, warn=warn)
-    return look(cwd or os.getcwd(), warn=warn)
+        return project_dir
+    return cwd or os.getcwd()
+
+
+def governing(project_dir=None, cwd=None, warn=False):
+    return look(governing_start(project_dir, cwd), warn=warn)
 
 
 def checkout_of(path):
@@ -318,10 +357,10 @@ def origin_url(repo):
 def require_origin(repo):
     url = origin_url(repo)
     if not url:
-        die(f"no origin remote in {repo}")
+        die(NO_ORIGIN.format(repo=repo))
     key = normalize_origin(url)
     if not key:
-        die(f"origin {url} is not a parseable git remote. Expected https://host/owner/repo or git@host:owner/repo")
+        die(BAD_ORIGIN.format(url=url))
     return url, key
 
 
@@ -349,16 +388,7 @@ def read_install_info():
 
 
 def write_install_info(source, ref):
-    path = install_info_path()
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    payload = {"version": VERSION, "source": source, "ref": ref}
-    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path))
-    with os.fdopen(fd, "w") as handle:
-        json.dump(payload, handle, indent=2)
-        handle.write("\n")
-        handle.flush()
-        os.fsync(handle.fileno())
-    os.replace(tmp, path)
+    write_json_atomic(install_info_path(), {"version": VERSION, "source": source, "ref": ref})
 
 
 def configured_source():
@@ -916,12 +946,15 @@ def cmd_doctor(argv):
         print("registry: unreadable")
     elif failure == "missing":
         print("registry: missing")
-    found = governing(os.environ.get("CLAUDE_PROJECT_DIR"), repo if os.path.isdir(repo) else os.getcwd())
+    start = repo if os.path.isdir(repo) else os.getcwd()
+    found = governing(os.environ.get("CLAUDE_PROJECT_DIR"), start)
     if found:
         print(f"registered: {found.origin}")
         print(f"config: {os.path.join(found.common, 'gantry.json')}")
     else:
         print("registered: no")
+    sections = _read_sections(os.environ.get("CLAUDE_PROJECT_DIR"), start)
+    print(_charter_doctor_line(sections))
     path = settings_path()
     if os.path.isfile(path):
         try:
@@ -952,7 +985,7 @@ def cmd_doctor(argv):
         hooks_path = git_stdout(repo, "config", "--get", "core.hooksPath")
         if hooks_path:
             print("core.hooksPath is set; the gantry pre-push stub will not run")
-    return 1 if failure == "unreadable" else 0
+    return 1 if failure == "unreadable" or any(section.rules is None for section in sections) else 0
 
 
 def normalize_files(paths):
@@ -1221,6 +1254,192 @@ def cmd_overlap(argv):
     return 0
 
 
+def charters_dir():
+    return os.path.join(home(), "charters")
+
+
+def repo_scope(project_dir, cwd, hint=""):
+    start = governing_start(project_dir, cwd)
+    if not git_stdout(start, "rev-parse", "--path-format=absolute", "--git-common-dir"):
+        raise CharterError(f"{start} is not a git repository{hint}")
+    url = origin_url(start)
+    if not url:
+        raise CharterError(NO_ORIGIN.format(repo=start))
+    key = normalize_origin(url)
+    if not key:
+        raise CharterError(BAD_ORIGIN.format(url=url))
+    return key
+
+
+def _charter_path(scope):
+    if scope == GLOBAL:
+        return os.path.join(charters_dir(), "global.json")
+    parts = scope.removeprefix("https://").split("/")
+    if len(parts) != 3 or any(part in ("", ".", "..") for part in parts):
+        raise CharterError(f"origin {scope} does not name a charter file")
+    return os.path.join(charters_dir(), "repos", parts[0], parts[1], parts[2] + ".json")
+
+
+def _parse_rules(raw):
+    try:
+        data = json.loads(raw)
+    except ValueError as exc:
+        raise CharterError(f"not JSON: {exc}") from exc
+    rules = data.get("rules") if isinstance(data, dict) else None
+    if not isinstance(rules, dict) or data.get("version") != 1:
+        raise CharterError('not {"version": 1, "rules": {...}}')
+    if any(not RULE_ID.fullmatch(rule_id) or not isinstance(text, str) for rule_id, text in rules.items()):
+        raise CharterError("a rule id or rule text is malformed")
+    if len(set(rules.values())) != len(rules):
+        raise CharterError("a rule is stored twice")
+    return rules
+
+
+def _load_rules(scope):
+    path = _charter_path(scope)
+    try:
+        with open(path, "rb") as handle:
+            return _parse_rules(handle.read())
+    except FileNotFoundError:
+        return {}
+    except (OSError, CharterError) as exc:
+        raise CharterError(f"{path} is unreadable ({exc}); fix or remove it") from exc
+
+
+def _admit(scope, rules, text):
+    for rule_id, existing in rules.items():
+        if existing == text:
+            return rule_id, False
+    if not text.strip():
+        raise CharterError("charter rule is empty")
+    if len(text) > TEXT_CAP:
+        raise CharterError(f"charter rule is {len(text)} characters; the limit is {TEXT_CAP}")
+    digest = hashlib.sha256(f"{scope}\0{text}".encode()).hexdigest()
+    kind = "g-" if scope == GLOBAL else "r-"
+    return next(kind + digest[:size] for size in range(6, len(digest) + 1) if kind + digest[:size] not in rules), True
+
+
+def _scope_label(scope):
+    return "every repo" if scope == GLOBAL else scope
+
+
+def _entry_lines(rule_id, text):
+    first, *rest = text.split("\n")
+    return [f"- {rule_id} {first}", *("  " + line for line in rest)]
+
+
+def _charter_add(scope, text):
+    path = _charter_path(scope)
+    with locked(path):
+        rules = _load_rules(scope)
+        rule_id, new = _admit(scope, rules, text)
+        if new:
+            rules[rule_id] = text
+            write_json_atomic(path, {"version": 1, "rules": rules})
+    return rule_id, new
+
+
+def _charter_rm(scope, rule_id):
+    path = _charter_path(scope)
+    with locked(path):
+        rules = _load_rules(scope)
+        if rule_id not in rules:
+            raise CharterError(f"no charter rule {rule_id} for {_scope_label(scope)}; run gantry charter list")
+        text = rules.pop(rule_id)
+        write_json_atomic(path, {"version": 1, "rules": rules})
+    return text
+
+
+def _read_sections(project_dir, cwd):
+    scopes = [GLOBAL]
+    try:
+        scope = repo_scope(project_dir, cwd)
+        _charter_path(scope)
+        scopes.append(scope)
+    except CharterError:
+        pass
+    sections = []
+    for scope in scopes:
+        try:
+            sections.append(Section(scope, _load_rules(scope)))
+        except CharterError:
+            sections.append(Section(scope, None))
+    return sections
+
+
+def _render_charter(sections, cap):
+    kept = {section.scope: None if section.rules is None else list(section.rules.items()) for section in sections}
+    dropped = 0
+    while True:
+        lines = []
+        for scope, entries in kept.items():
+            if entries is None:
+                lines += [f"{_scope_label(scope)}:", UNREADABLE_LINE]
+            elif entries:
+                lines.append(f"{_scope_label(scope)}:")
+                for rule_id, text in entries:
+                    lines += _entry_lines(rule_id, text)
+        if dropped:
+            lines.append(OVERFLOW_LINE.format(count=dropped))
+        lines = [CHARTER_HEADER, *lines] if lines else []
+        sizes = {scope: len(entries) for scope, entries in kept.items() if entries}
+        if cap is None or len("\n".join(lines)) <= cap or sum(sizes.values()) <= 1:
+            return lines
+        largest = max(sizes, key=lambda scope: (sizes[scope], scope == GLOBAL))
+        kept[largest].pop(0)
+        dropped += 1
+
+
+def charter_block(project_dir, cwd):
+    try:
+        return _render_charter(_read_sections(project_dir, cwd or os.getcwd()), CHARTER_CAP)
+    except Exception:
+        return [CHARTER_HEADER, UNREADABLE_LINE]
+
+
+def _charter_doctor_line(sections):
+    counts = ["unreadable" if section.rules is None else str(len(section.rules)) for section in sections]
+    return f"charter: every repo {counts[0]}, this repo {counts[1] if len(counts) > 1 else 'none'}"
+
+
+def cmd_charter(argv):
+    verb, args = (argv[0], argv[1:]) if argv else ("", [])
+    project_dir = os.environ.get("CLAUDE_PROJECT_DIR")
+    if verb == "add":
+        every = args[:1] == ["--global"]
+        if every:
+            args = args[1:]
+        if len(args) != 1:
+            raise CharterError("charter add takes the rule as one quoted argument")
+        scope = GLOBAL if every else repo_scope(project_dir, os.getcwd(), "; add --global for a rule that applies in every repo")
+        rule_id, new = _charter_add(scope, args[0])
+        print(f"{rule_id} {'saved' if new else 'already saved'} for {_scope_label(scope)}: {args[0]}")
+        return 0
+    if verb == "list":
+        if args:
+            raise CharterError("charter list takes no arguments")
+        _charter_path(repo_scope(project_dir, os.getcwd()))
+        sections = _read_sections(project_dir, os.getcwd())
+        lines = _render_charter(sections, None)
+        if lines:
+            print("\n".join(lines))
+        unreadable = [section.scope for section in sections if section.rules is None]
+        for scope in unreadable:
+            print(f"gantry: {_charter_path(scope)} does not parse; fix or remove it", file=sys.stderr)
+        return 1 if unreadable else 0
+    if verb == "rm":
+        if len(args) != 1:
+            raise CharterError("charter rm takes one id; run gantry charter list")
+        match = RULE_ID.fullmatch(args[0])
+        if not match:
+            raise CharterError(f"{args[0]} is not a charter id; run gantry charter list")
+        scope = GLOBAL if match["kind"] == "g" else repo_scope(project_dir, os.getcwd())
+        text = _charter_rm(scope, args[0])
+        print(f"{args[0]} removed from {_scope_label(scope)}: {text}")
+        return 0
+    raise CharterError("charter takes add, list, or rm")
+
+
 def require_launch(restart):
     root, _common = checkout_of(".")
     if os.path.realpath(os.getcwd()) != os.path.realpath(root):
@@ -1300,6 +1519,8 @@ def dispatch(argv):
         return cmd_doctor(argv[1:])
     if command == "overlap":
         return cmd_overlap(argv[1:])
+    if command == "charter":
+        return cmd_charter(argv[1:])
     if command == "restart":
         return cmd_restart(argv[1:])
     if command == "governed":
@@ -1311,7 +1532,7 @@ def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     try:
         return dispatch(argv)
-    except RegistryError as exc:
+    except (RegistryError, CharterError) as exc:
         print(f"gantry: {exc}", file=sys.stderr)
         return 1
 
