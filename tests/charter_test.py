@@ -13,7 +13,7 @@ sys.path.insert(0, KIT)
 import gantry_kit
 
 KEY = "https://github.com/example-org/example-repo"
-LORE = "Hey, always check Lore's JIRA tickets"
+TICKET = "Hey, always check the linked ticket"
 E2E = "Run the e2e suite before any PR that touches checkout/.\nSkip it for docs-only changes."
 FORCE = "Never force-push a shared branch."
 HEADER = "gantry charter. Standing rules from the user. Follow every one, and copy the lines a task needs onto its brief's Charter line."
@@ -22,7 +22,7 @@ BLOCK = [
     "every repo:",
     "- g-071c6d Never force-push a shared branch.",
     f"{KEY}:",
-    "- r-fc5233 Hey, always check Lore's JIRA tickets",
+    "- r-ad322a Hey, always check the linked ticket",
     "- r-b7b862 Run the e2e suite before any PR that touches checkout/.",
     "  Skip it for docs-only changes.",
 ]
@@ -30,12 +30,12 @@ FILE_EXAMPLE = (
     b'{\n'
     b'  "version": 1,\n'
     b'  "rules": {\n'
-    b'    "r-fc5233": "Hey, always check Lore\'s JIRA tickets",\n'
+    b'    "r-ad322a": "Hey, always check the linked ticket",\n'
     b'    "r-b7b862": "Run the e2e suite before any PR that touches checkout/.\\nSkip it for docs-only changes."\n'
     b'  }\n'
     b'}\n'
 )
-UNREADABLE = [HEADER, "every repo:", "- unreadable; run gantry doctor", f"{KEY}:", f"- r-fc5233 {LORE}"]
+UNREADABLE = [HEADER, "every repo:", "- unreadable; run gantry doctor", f"{KEY}:", f"- r-ad322a {TICKET}"]
 HINT = "; add --global for a rule that applies in every repo"
 ORCA = """#!/usr/bin/env python3
 import json, sys
@@ -45,12 +45,12 @@ print(json.dumps({"ok": True, "result": results.get(sys.argv[2] if len(sys.argv)
 BAD_ORIGIN = "gantry: origin not-a-url is not a parseable git remote. Expected https://host/owner/repo or git@host:owner/repo\n"
 
 CLI_ROWS = [
-    (["charter", "add", LORE], f"r-fc5233 saved for {KEY}: {LORE}\n", "", 0),
-    (["charter", "add", LORE], f"r-fc5233 already saved for {KEY}: {LORE}\n", "", 0),
+    (["charter", "add", TICKET], f"r-ad322a saved for {KEY}: {TICKET}\n", "", 0),
+    (["charter", "add", TICKET], f"r-ad322a already saved for {KEY}: {TICKET}\n", "", 0),
     (["charter", "add", "--global", FORCE], f"g-071c6d saved for every repo: {FORCE}\n", "", 0),
     (["charter", "list"], "\n".join(BLOCK[:5]) + "\n", "", 0),
-    (["charter", "rm", "r-fc5233"], f"r-fc5233 removed from {KEY}: {LORE}\n", "", 0),
-    (["charter", "rm", "r-fc5233"], "", f"gantry: no charter rule r-fc5233 for {KEY}; run gantry charter list\n", 1),
+    (["charter", "rm", "r-ad322a"], f"r-ad322a removed from {KEY}: {TICKET}\n", "", 0),
+    (["charter", "rm", "r-ad322a"], "", f"gantry: no charter rule r-ad322a for {KEY}; run gantry charter list\n", 1),
     (["charter", "rm", "fc5233"], "", "gantry: fc5233 is not a charter id; run gantry charter list\n", 1),
     (["charter", "add", "   "], "", "gantry: charter rule is empty\n", 1),
     (["charter", "add", "Always", "check"], "", "gantry: charter add takes the rule as one quoted argument\n", 1),
@@ -140,7 +140,7 @@ def case_cli_table(fx):
 
 
 def case_file_bytes(fx):
-    fx.run("charter", "add", LORE)
+    fx.run("charter", "add", TICKET)
     fx.run("charter", "add", E2E)
     fx.run("charter", "add", "--global", FORCE)
     listed = fx.run("charter", "list")
@@ -154,9 +154,9 @@ def case_file_bytes(fx):
 
 def case_idempotent(fx):
     fx.run("charter", "add", "--global", FORCE)
-    fx.run("charter", "add", LORE)
+    fx.run("charter", "add", TICKET)
     checks = []
-    for path, argv in ((fx.global_file, ["--global", FORCE]), (fx.repo_file, [LORE])):
+    for path, argv in ((fx.global_file, ["--global", FORCE]), (fx.repo_file, [TICKET])):
         os.utime(path, ns=(1_000_000_000, 1_000_000_000))
         before = (read(path), os.stat(path).st_mtime_ns)
         again = fx.run("charter", "add", *argv)
@@ -215,7 +215,7 @@ def case_crash_before_replace(fx):
 
 def case_corrupt(fx):
     fx.run("charter", "add", "--global", FORCE)
-    fx.run("charter", "add", LORE)
+    fx.run("charter", "add", TICKET)
     with open(fx.global_file, "w") as handle:
         handle.write("{not json")
     before = read(fx.global_file)
@@ -239,7 +239,7 @@ def case_corrupt(fx):
 
 def case_run_fail_open(fx):
     fx.run("install", fx.repo)
-    fx.run("charter", "add", LORE)
+    fx.run("charter", "add", TICKET)
     with open(fx.global_file, "w") as handle:
         handle.write("{not json")
     write = subprocess.run([sys.executable, RUN, "write"], cwd=fx.repo, env=fx.env(), capture_output=True, text=True)
@@ -263,7 +263,7 @@ def case_run_fail_open(fx):
 def case_doctor(fx):
     empty = fx.run("doctor", fx.repo)
     fx.run("charter", "add", "--global", FORCE)
-    fx.run("charter", "add", LORE)
+    fx.run("charter", "add", TICKET)
     fx.run("charter", "add", E2E)
     healthy = fx.run("doctor", fx.repo)
     outside = fx.run("doctor", cwd=fx.scratch)
@@ -277,7 +277,7 @@ def case_doctor(fx):
 def case_install_lifecycle(fx):
     installed = fx.run("install", fx.repo)
     fx.run("charter", "add", "--global", FORCE)
-    fx.run("charter", "add", LORE)
+    fx.run("charter", "add", TICKET)
     before = (read(fx.global_file), read(fx.repo_file))
     with open(os.path.join(fx.home, ".gantry", "registry.json"), "w") as handle:
         handle.write("{")
@@ -292,7 +292,7 @@ def case_install_lifecycle(fx):
         (installed.returncode == 0 and repaired.returncode == 0 and gone.returncode == 0, installed.stderr + repaired.stderr + gone.stderr),
         (after_repair == before, "install --repair keeps the charter"),
         (after_uninstall == before, "per-repo uninstall keeps the charter"),
-        (again.returncode == 0 and f"- r-fc5233 {LORE}" in listed.stdout, "installing again brings the rules back"),
+        (again.returncode == 0 and f"- r-ad322a {TICKET}" in listed.stdout, "installing again brings the rules back"),
         (removed.returncode == 0 and not os.path.exists(fx.charters), "uninstall --all removes the charter"),
         (status(fx.repo) == "", "porcelain empty"),
     ]

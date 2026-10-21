@@ -89,7 +89,7 @@ CHARTER = [
     "every repo:",
     "- g-071c6d Never force-push a shared branch.",
     "https://github.com/example-org/example-repo:",
-    "- r-fc5233 Hey, always check Lore's JIRA tickets",
+    "- r-ad322a Hey, always check the linked ticket",
 ]
 
 
@@ -407,7 +407,7 @@ def test_launcher_compact_and_restart():
 
 
 def add_rules(repo, env):
-    for args in (["--global", "Never force-push a shared branch."], ["Hey, always check Lore's JIRA tickets"]):
+    for args in (["--global", "Never force-push a shared branch."], ["Hey, always check the linked ticket"]):
         proc = launch(repo, env, "charter", "add", *args)
         assert proc.returncode == 0, proc.stderr
 
