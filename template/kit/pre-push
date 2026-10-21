@@ -1,0 +1,40 @@
+#!/bin/sh
+# gantry pre-push
+# Second layer under the Claude guard. Humans can bypass with --no-verify;
+# the guard denies --no-verify to agents. A missing kit refuses the push.
+root=$(git rev-parse --show-toplevel 2>/dev/null) || {
+  echo "gantry pre-push: not a git checkout; refusing the push." >&2
+  exit 1
+}
+kit="${HOME}/.gantry/current/kit/gantry_kit.py"
+if [ ! -f "$kit" ]; then
+  echo "gantry pre-push: kit missing; refusing the push." >&2
+  exit 1
+fi
+governed=$(python3 "$kit" governed --repo "$root") || {
+  echo "gantry pre-push: kit error; refusing the push." >&2
+  exit 1
+}
+[ "$governed" = yes ] || exit 0
+default=$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##')
+default=${default:-main}
+zero=0000000000000000000000000000000000000000
+while read -r local_ref local_sha remote_ref remote_sha; do
+  branch=${remote_ref#refs/heads/}
+  if [ "$branch" = "$default" ]; then
+    echo "gantry pre-push: refusing to push to $default; land changes through a PR." >&2
+    exit 1
+  fi
+  if [ "$local_sha" = "$zero" ]; then
+    continue
+  fi
+  if [ "$remote_sha" != "$zero" ] && git cat-file -e "$remote_sha" 2>/dev/null &&
+     ! git merge-base --is-ancestor "$remote_sha" "$local_sha"; then
+    lease=$(ps -o args= -p "$PPID" 2>/dev/null)
+    case $lease in
+      *--force-with-lease*) ;;
+      *) echo "gantry pre-push: non-fast-forward push to $branch needs --force-with-lease." >&2; exit 1 ;;
+    esac
+  fi
+done
+exit 0

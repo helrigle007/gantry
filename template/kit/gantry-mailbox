@@ -1,0 +1,164 @@
+#!/usr/bin/env python3
+"""gantry coordinator mailbox.
+
+Orca types "You have N orchestration messages" and then Enter into the coordinator's terminal whenever
+a message arrives that no live `orchestration check --wait` covers. That Enter submits whatever the
+operator was typing. A detached daemon therefore holds the Run's one unfiltered waiter at all times,
+acking and re-waiting in a single call, and journals every batch. The coordinator waits on the journal.
+
+  gantry-mailbox wait [--types t1,t2] [--timeout-ms N]
+      Start the daemon if needed, then block until a message of a listed type (default: any type but
+      heartbeat and status) is journaled, or the timeout passes. Prints every new message as one JSON
+      line, then advances this Run's cursor.
+"""
+import fcntl
+import json
+import os
+import subprocess
+import sys
+import time
+
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from gantry_run import project_message
+
+QUIET = {"heartbeat", "status"}
+WAIT_MS = 120000
+
+
+def orca(*args, timeout=30):
+    r = subprocess.run(["orca", *args, "--json"], capture_output=True, text=True, timeout=timeout)
+    try:
+        d = json.loads(r.stdout)
+    except ValueError:
+        d = {}
+    if not d.get("ok"):
+        raise RuntimeError(json.dumps(d.get("error") or r.stderr.strip() or f"exit {r.returncode}")[:400])
+    return d["result"]
+
+
+def bound_run():
+    run = (orca("orchestration", "run-current").get("run") or {}).get("id")
+    if not run:
+        sys.exit("gantry-mailbox: this terminal has no bound Run; run orchestration run-create first")
+    return run
+
+
+def state(run):
+    d = os.path.join(os.environ.get("TMPDIR", "/tmp"), "gantry-mailbox", run)
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def journal(d):
+    try:
+        with open(os.path.join(d, "journal.jsonl")) as f:
+            return [json.loads(line) for line in f if line.strip()]
+    except FileNotFoundError:
+        return []
+
+
+def log(d, text):
+    with open(os.path.join(d, "daemon.log"), "a") as f:
+        f.write(f"{time.strftime('%Y-%m-%dT%H:%M:%S')} {text}\n")
+
+
+def daemon(run):
+    d = state(run)
+    lock = open(os.path.join(d, "lock"), "w")
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        return
+    handle = os.environ["ORCA_TERMINAL_HANDLE"]
+    seen = {m["id"] for m in journal(d)}
+    ack = None
+    log(d, f"started pid {os.getpid()} for {handle}")
+    while True:
+        try:
+            if orca("terminal", "show", "--terminal", handle)["terminal"].get("orphaned"):
+                return log(d, "coordinator terminal closed; exiting")
+            if bound_run() != run:
+                return log(d, "terminal bound to another Run; exiting")
+        except Exception as e:
+            return log(d, f"coordinator terminal gone ({e}); exiting")
+        try:
+            r = orca("orchestration", "check", "--wait", "--timeout-ms", str(WAIT_MS), *(["--ack", ack] if ack else []),
+                     timeout=WAIT_MS / 1000 + 30)
+        except Exception as e:
+            log(d, f"check failed: {e}")
+            if "consumer_fenced" in str(e):
+                return
+            ack = None
+            time.sleep(5)
+            continue
+        fresh = [m for m in r.get("messages") or [] if m["id"] not in seen]
+        with open(os.path.join(d, "journal.jsonl"), "a") as f:
+            for m in fresh:
+                f.write(json.dumps(m) + "\n")
+                seen.add(m["id"])
+        ack = r.get("deliveryId")
+
+
+def ensure_daemon(d, run):
+    with open(os.path.join(d, "lock"), "w") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            return
+        fcntl.flock(lock, fcntl.LOCK_UN)
+    subprocess.Popen([sys.executable, os.path.abspath(__file__), "daemon", run], start_new_session=True,
+                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    time.sleep(1)
+
+
+def wait(types, timeout_ms):
+    run = bound_run()
+    d = state(run)
+    cursor_path = os.path.join(d, "cursor")
+    try:
+        with open(cursor_path) as f:
+            cursor = int(f.read() or 0)
+    except FileNotFoundError:
+        cursor = 0
+    ensure_daemon(d, run)
+    start = last_daemon_check = time.monotonic()
+    print(json.dumps({"gantry_mailbox": "waiting", "run": run}, separators=(",", ":")), flush=True)
+    while True:
+        if time.monotonic() - last_daemon_check >= 10:
+            ensure_daemon(d, run)
+            last_daemon_check = time.monotonic()
+        lines = journal(d)
+        new = lines[cursor:]
+        hit = any((m["type"] in types) if types else (m["type"] not in QUIET) for m in new)
+        timed_out = time.monotonic() - start >= timeout_ms / 1000
+        if hit or timed_out:
+            for message in new:
+                print(json.dumps(project_message(message), separators=(",", ":")), flush=True)
+            with open(cursor_path + ".tmp", "w") as f:
+                f.write(str(len(lines)))
+            os.replace(cursor_path + ".tmp", cursor_path)
+            print(json.dumps({"gantry_mailbox": "done", "matched": hit, "timedOut": timed_out and not hit, "count": len(new)}, separators=(",", ":")), flush=True)
+            return
+        time.sleep(1)
+
+
+def main():
+    args = sys.argv[1:]
+    if args[:1] == ["daemon"] and len(args) == 2:
+        return daemon(args[1])
+    if args[:1] != ["wait"]:
+        sys.exit(__doc__)
+    types, timeout_ms, it = set(), 180000, iter(args[1:])
+    for a in it:
+        if a == "--types":
+            types = {t.strip() for t in next(it, "").split(",") if t.strip()}
+        elif a == "--timeout-ms":
+            timeout_ms = int(next(it, "180000"))
+        else:
+            sys.exit(f"gantry-mailbox: unknown argument {a}\n{__doc__}")
+    wait(types, timeout_ms)
+
+
+if __name__ == "__main__":
+    main()

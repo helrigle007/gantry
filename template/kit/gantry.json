@@ -1,0 +1,8 @@
+{
+  "autoMerge": true,
+  "contextReset": {
+    "mode": "compact",
+    "thresholdTokens": 300000
+  },
+  "forbidden": []
+}

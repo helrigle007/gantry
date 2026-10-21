@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# gantry: thin launcher. The command table lives in gantry_kit.py.
+set -euo pipefail
+self=$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "${BASH_SOURCE[0]}")
+here=$(dirname "$self")
+if [ -f "$here/../kit/gantry_kit.py" ]; then
+  exec python3 "$here/../kit/gantry_kit.py" "$@"
+fi
+root=$(cd "$here/.." && pwd)
+exec python3 "$root/template/kit/gantry_kit.py" "$@"
