@@ -8,6 +8,7 @@ import tempfile
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 GANTRY = os.path.join(ROOT, "bin", "gantry")
 KIT = os.path.join(ROOT, "template", "kit")
+RUN = os.path.join(KIT, "gantry_run.py")
 sys.path.insert(0, KIT)
 import gantry_kit
 
@@ -34,7 +35,13 @@ FILE_EXAMPLE = (
     b'  }\n'
     b'}\n'
 )
+UNREADABLE = [HEADER, "every repo:", "- unreadable; run gantry doctor", f"{KEY}:", f"- r-fc5233 {LORE}"]
 HINT = "; add --global for a rule that applies in every repo"
+ORCA = """#!/usr/bin/env python3
+import json, sys
+results = {"run-current": {"run": {"id": "run_charter", "objective": "keep the rules"}}}
+print(json.dumps({"ok": True, "result": results.get(sys.argv[2] if len(sys.argv) > 2 else "", {})}))
+"""
 BAD_ORIGIN = "gantry: origin not-a-url is not a parseable git remote. Expected https://host/owner/repo or git@host:owner/repo\n"
 
 CLI_ROWS = [
@@ -88,7 +95,7 @@ class Fixture:
             handle.write("{}\n")
         os.makedirs(self.bin)
         with open(os.path.join(self.bin, "orca"), "w") as handle:
-            handle.write("#!/bin/sh\nexit 0\n")
+            handle.write(ORCA)
         os.chmod(os.path.join(self.bin, "orca"), 0o755)
         os.makedirs(self.scratch)
         self.git_repo(self.repo, f"{KEY}.git")
@@ -222,12 +229,35 @@ def case_corrupt(fx):
         (rm.returncode == 1 and "global.json" in rm.stderr, rm.stderr),
         (read(fx.global_file) == before, "corrupt bytes kept"),
         (listed.returncode == 1, f"list exits 1: {listed.returncode}"),
-        (listed.stdout == "\n".join([HEADER, "every repo:", "- unreadable; run gantry doctor", f"{KEY}:", f"- r-fc5233 {LORE}"]) + "\n", listed.stdout),
+        (listed.stdout == "\n".join(UNREADABLE) + "\n", listed.stdout),
         ("global.json" in listed.stderr, listed.stderr),
         (doctor.returncode == 1, f"doctor exits 1: {doctor.returncode}"),
         ("charter: every repo unreadable, this repo 1\n" in doctor.stdout, doctor.stdout),
         (repo_add.returncode == 0, "the readable scope still takes an add"),
     ]
+
+
+def case_run_fail_open(fx):
+    fx.run("install", fx.repo)
+    fx.run("charter", "add", LORE)
+    with open(fx.global_file, "w") as handle:
+        handle.write("{not json")
+    write = subprocess.run([sys.executable, RUN, "write"], cwd=fx.repo, env=fx.env(), capture_output=True, text=True)
+    payload = {"hook_event_name": "SessionStart", "session_id": "s", "transcript_path": "", "cwd": fx.repo, "agent_type": "gantry-coordinator"}
+    sessions = {
+        source: subprocess.run([sys.executable, RUN], input=json.dumps({**payload, "source": source}), cwd=fx.repo, env=fx.env(), capture_output=True, text=True)
+        for source in ("startup", "compact")
+    }
+    checks = [
+        (write.returncode == 0, f"gantry_run.py write exits 0: {write.returncode} {write.stderr}"),
+        ("\n".join(UNREADABLE) + "\nNext: " in write.stdout, write.stdout),
+    ]
+    for source, proc in sessions.items():
+        injected = json.loads(proc.stdout)["hookSpecificOutput"]["additionalContext"] if proc.stdout else ""
+        checks.append((proc.returncode == 0, f"SessionStart {source} exits 0: {proc.stderr}"))
+        checks.append(("\n".join(UNREADABLE) in injected, f"SessionStart {source} carries the unreadable line: {proc.stdout}"))
+    checks.append((status(fx.repo) == "", "porcelain empty"))
+    return checks
 
 
 def case_doctor(fx):
@@ -331,7 +361,7 @@ def case_block_cap(fx):
 
 CASES = [
     case_cli_table, case_file_bytes, case_idempotent, case_concurrent, case_crash_before_replace,
-    case_corrupt, case_doctor, case_install_lifecycle, case_block_cap,
+    case_corrupt, case_run_fail_open, case_doctor, case_install_lifecycle, case_block_cap,
 ]
 
 

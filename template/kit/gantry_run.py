@@ -30,6 +30,13 @@ DEFAULT_MODE = "compact"
 DEFAULT_THRESHOLD = 300000
 AUTOCOMPACT_MIN = 100000
 AUTOCOMPACT_MAX = 1000000
+SESSION_CONTEXT = {
+    "resume": "handoff",
+    "compact": "handoff",
+    "fork": "handoff",
+    "startup": "charter",
+    "clear": "charter",
+}
 
 
 def state_dir(run):
@@ -284,9 +291,15 @@ def render_handoff(state):
     room = HANDOFF_CAP - len(nxt) - 2
     if room < 0:
         return nxt[:HANDOFF_CAP].rstrip() + "\n"
+    charter = []
+    for line in state["charter"]:
+        if len(line) + 1 > room:
+            break
+        charter.append(line)
+        room -= len(line) + 1
     if len(body) > room:
         body = body[:room].rstrip()
-    return body + "\n" + nxt + "\n"
+    return "\n".join([body, *charter, nxt]) + "\n"
 
 
 def autocompact_tokens(config):
@@ -383,6 +396,7 @@ def build_state(cwd):
     apply_journal_prs(state)
     state["next"] = next_step(state)
     state["overlap"] = overlap_events(run)
+    state["charter"] = kit.charter_block(os.environ.get("CLAUDE_PROJECT_DIR"), cwd)
     return state
 
 
@@ -529,22 +543,29 @@ def emit_threshold(data):
     sys.stdout.write("\n")
 
 
+def session_context(source, restarted):
+    if source == "startup" and restarted:
+        return "handoff"
+    return SESSION_CONTEXT.get(source)
+
+
 def emit_session(data):
-    source = data.get("source") or ""
-    if source not in ("startup", "resume", "compact", "fork"):
+    kind = session_context(data.get("source") or "", os.environ.get("GANTRY_RESTART") == "1")
+    if kind is None or not for_coordinator(data):
         return
-    if not for_coordinator(data):
+    cwd = data.get("cwd") or ""
+    text = ""
+    if kind == "handoff":
+        try:
+            _state, text = refresh(cwd)
+        except Exception:
+            text = latest_handoff()
+    if not text.strip():
+        text = "\n".join(kit.charter_block(os.environ.get("CLAUDE_PROJECT_DIR"), cwd))
+    if not text.strip():
         return
-    if source == "startup" and os.environ.get("GANTRY_RESTART") != "1":
-        return
-    try:
-        _state, handoff = refresh(data.get("cwd") or "")
-    except Exception:
-        handoff = latest_handoff()
-        if not handoff.strip():
-            return
     json.dump(
-        {"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": handoff.strip()}},
+        {"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": text.strip()}},
         sys.stdout,
     )
     sys.stdout.write("\n")
