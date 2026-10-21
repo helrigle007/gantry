@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.0
+
+- The coordinator saves your standing rules in your exact words with `gantry charter add`, and `gantry charter list` and `gantry charter rm <id>` show and remove them. A rule applies to the current repo, or to every repo with `--global`. Rules live in `~/.gantry/charters/`, outside every repo.
+- The charter comes back after every compaction, `/clear`, new session, and `gantry restart`. The handoff carries it just above `Next:`, and a plain start or `/clear` injects only the charter. A coordinator brief copies every rule for the repo and every global rule onto a `Charter:` line.
+- The guard lets the coordinator run `gantry charter` and denies worker edits anywhere under `~/.gantry`, including a path written with `~`. Before 0.2.0, a worker could write files under `~/.gantry`, such as `registry.json`.
+- `gantry doctor` prints how many charter rules apply, globally and for this repo, and fails when a charter file does not parse. Per-repo `uninstall` keeps the charter. `uninstall --all` deletes it.
+- The README shows how to put `gantry` on PATH on macOS.
+- `gantry --version` prints `0.2.0`.
+
 ## 0.1.0
 
 - Gantry installs its kit under `~/.gantry` and registers the coordinator and the guard at user level. Installing or updating a repo commits nothing in that repo and opens no pull request against it.

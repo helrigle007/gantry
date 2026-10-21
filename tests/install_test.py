@@ -192,7 +192,7 @@ def case_clean_home(fx):
         (not os.path.isdir(os.path.join(fx.repo, ".claude")), "no .claude directory in the repo"),
         (trust["projects"][os.path.realpath(fx.repo)]["hasTrustDialogAccepted"] is True, "trusts the main checkout"),
         ("gantry-guard.py" in settings and "exit 2" in settings, "user hook fails closed"),
-        ("0.1.0" in fx.run("--version").stdout, "version is 0.1.0"),
+        ("0.2.0" in fx.run("--version").stdout, "version is 0.2.0"),
     ]
 
 
@@ -445,7 +445,7 @@ def case_doctor(fx):
     text = result.stdout
     return [
         (result.returncode == 0, result.stderr),
-        ("version: 0.1.0" in text, text),
+        ("version: 0.2.0" in text, text),
         ("registered: https://github.com/example-user/example-fixture" in text, text),
         ("hooks: gantry guard present" in text, text),
         ("pre-push: gantry stub" in text, text),
