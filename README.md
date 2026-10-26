@@ -71,6 +71,8 @@ The check sees work pushed to GitHub. Unpushed local branches are invisible.
 
 The guard lets the coordinator run `gantry overlap`. A worker `gh pr create` stays denied until the pre-pr check is cleared.
 
+`evals/overlap/` measures this check and does not change it. `python3 evals/overlap/score.py` scores `classify` and `verdict_of` on the golden cases. `python3 scripts/overlap_efficiency.py --before <sessions> --after <sessions>` compares coordinator transcripts. The v0.2.0 score, and the commands that record a live baseline, are in [evals/overlap/README.md](evals/overlap/README.md).
+
 ## Start a coordinator
 
 Open an Orca terminal in the repo's main checkout, not a worktree, and run:
@@ -185,8 +187,9 @@ Add:
 
 - `bin/gantry` is the launcher. `gantry --version` prints `0.2.0`.
 - `template/kit/` is the source the launcher installs under `~/.gantry`.
-- `scripts/race-check.py <repo> [n] [timeout]` starts N new-child workers in parallel and times each first heartbeat. `scripts/ping-runs.py <repo> <n>` times coordinator responsiveness.
-- `tests/guard_test.py`, `tests/install_test.py`, `tests/update_test.py`, `tests/context_attribution_test.py`, `tests/reset_test.py`, `tests/overlap_test.py`, `tests/registry_test.py`, and `tests/charter_test.py` are the regression suites.
+- `scripts/race-check.py <repo> [n] [timeout]` starts N new-child workers in parallel and times each first heartbeat. `scripts/ping-runs.py <repo> <n>` times coordinator responsiveness. `scripts/overlap_efficiency.py` compares overlap checks in coordinator transcripts.
+- `evals/overlap/` is the duplicate-work measurement harness: golden cases, the correctness runner, and the transcript fixtures.
+- `tests/guard_test.py`, `tests/install_test.py`, `tests/update_test.py`, `tests/context_attribution_test.py`, `tests/reset_test.py`, `tests/overlap_test.py`, `tests/overlap_eval_test.py`, `tests/registry_test.py`, and `tests/charter_test.py` are the regression suites.
 - `docs/ground-truth.md` records what the installed tools actually do.
 
 ## License
