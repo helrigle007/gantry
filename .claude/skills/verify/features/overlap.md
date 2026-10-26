@@ -32,6 +32,10 @@ $S guard "$V" coordinator repo Bash '{"command":"gantry overlap --checkpoint sco
 python3 tests/overlap_test.py    # expects 2/2 passed
 ```
 
+## Measurement
+
+`evals/overlap/` scores the check and does not change it. `python3 evals/overlap/score.py` scores `classify` and `verdict_of` on the golden cases. `python3 scripts/overlap_efficiency.py --before <sessions> --after <sessions>` compares coordinator transcripts. The v0.2.0 score and the live baseline commands are in `evals/overlap/README.md`. `python3 tests/overlap_eval_test.py` expects `9/9 passed`.
+
 ## Gotchas
 
 - The check cannot see unpushed local branches. Say that when you report a clear result.

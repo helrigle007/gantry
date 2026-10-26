@@ -9,6 +9,7 @@ python3 tests/update_test.py
 python3 tests/context_attribution_test.py
 python3 tests/reset_test.py
 python3 tests/overlap_test.py
+python3 tests/overlap_eval_test.py
 ```
 
 Each suite prints `N/N passed`.

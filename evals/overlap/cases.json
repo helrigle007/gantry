@@ -1,0 +1,358 @@
+{
+  "version": 1,
+  "rule": "Shared files and the intent contained in the title or body, or the title contained in the intent, is duplicate. Shared files otherwise is related. No shared files is unrelated. The verdict is continue when every candidate is unrelated, and ask otherwise. Comparison is case-insensitive substring after trimming. Paths drop a leading ./.",
+  "cases": [
+    {
+      "id": "exact-duplicate-pr",
+      "task": "Fix the crash in the request path of the example app.",
+      "intent": "Fix the crash in app",
+      "files": ["src/app.py", "tests/test_app.py"],
+      "verdict": "ask",
+      "candidates": [
+        {
+          "kind": "pr",
+          "id": "1",
+          "title": "FIX THE CRASH IN APP",
+          "body": "The crash is in the request path.",
+          "branch": "fix-crash",
+          "url": "https://github.com/example-org/example-repo/pull/1",
+          "files": ["./src/app.py", "tests/test_app.py"],
+          "label": "duplicate"
+        }
+      ]
+    },
+    {
+      "id": "duplicate-intent-in-body",
+      "task": "Fix the crash in the request path of the example app.",
+      "intent": "Fix the crash in app",
+      "files": ["src/app.py"],
+      "verdict": "ask",
+      "candidates": [
+        {
+          "kind": "pr",
+          "id": "4",
+          "title": "Request path",
+          "body": "Fix the crash in app by guarding the empty header.",
+          "branch": "request-path",
+          "url": "https://github.com/example-org/example-repo/pull/4",
+          "files": ["src/app.py"],
+          "label": "duplicate"
+        }
+      ]
+    },
+    {
+      "id": "duplicate-branch-no-pr",
+      "task": "Add retry-client to the example client.",
+      "intent": "Add retry-client",
+      "files": ["src/client.py"],
+      "verdict": "ask",
+      "note": "The branch has no pull request. Its name is contained in the intent and it touches the same file.",
+      "candidates": [
+        {
+          "kind": "branch",
+          "id": "retry-client",
+          "title": "retry-client",
+          "body": "",
+          "branch": "retry-client",
+          "url": "",
+          "files": ["src/client.py"],
+          "label": "duplicate"
+        }
+      ]
+    },
+    {
+      "id": "related-pr-different-intent",
+      "task": "Fix the crash in the request path of the example app.",
+      "intent": "Fix the crash in app",
+      "files": ["src/app.py", "tests/test_app.py"],
+      "verdict": "ask",
+      "candidates": [
+        {
+          "kind": "pr",
+          "id": "2",
+          "title": "Rename the banner",
+          "body": "Cosmetic copy only.",
+          "branch": "banner",
+          "url": "https://github.com/example-org/example-repo/pull/2",
+          "files": ["src/app.py"],
+          "label": "related"
+        }
+      ]
+    },
+    {
+      "id": "unrelated-prs",
+      "task": "Fix the crash in the request path of the example app.",
+      "intent": "Fix the crash in app",
+      "files": ["src/app.py", "tests/test_app.py"],
+      "verdict": "continue",
+      "candidates": [
+        {
+          "kind": "pr",
+          "id": "3",
+          "title": "Update readme",
+          "body": "Docs only.",
+          "branch": "docs-readme",
+          "url": "https://github.com/example-org/example-repo/pull/3",
+          "files": ["README.md"],
+          "label": "unrelated"
+        },
+        {
+          "kind": "pr",
+          "id": "5",
+          "title": "Fix the crash in the docs site",
+          "body": "Docs site only.",
+          "branch": "docs-site",
+          "url": "https://github.com/example-org/example-repo/pull/5",
+          "files": ["docs/index.md"],
+          "label": "unrelated"
+        }
+      ]
+    },
+    {
+      "id": "assigned-issue-matching-title",
+      "task": "Fix the crash in the request path of the example app.",
+      "intent": "Fix the crash in app",
+      "files": ["src/app.py", "tests/test_app.py"],
+      "verdict": "continue",
+      "note": "gather() stores an assigned issue with an empty file list. No shared files is unrelated, even when the title is the intent.",
+      "candidates": [
+        {
+          "kind": "issue",
+          "id": "9",
+          "title": "Fix the crash in app",
+          "body": "The crash is in the request path.",
+          "branch": "",
+          "url": "https://github.com/example-org/example-repo/issues/9",
+          "files": [],
+          "label": "unrelated"
+        }
+      ]
+    },
+    {
+      "id": "active-worker-same-task",
+      "task": "Fix the crash in the request path of the example app.",
+      "intent": "Fix the crash in app",
+      "files": ["src/app.py", "tests/test_app.py"],
+      "verdict": "ask",
+      "note": "An active worker whose title is the intent and whose files overlap is a duplicate.",
+      "candidates": [
+        {
+          "kind": "worker",
+          "id": "task_impl",
+          "title": "Fix the crash in app",
+          "body": "",
+          "branch": "",
+          "url": "",
+          "files": ["src/app.py", "tests/test_app.py"],
+          "label": "duplicate"
+        }
+      ]
+    },
+    {
+      "id": "no-candidates",
+      "task": "Add a slug helper for the example app.",
+      "intent": "Add a slug helper",
+      "files": ["src/slug.py", "tests/test_slug.py"],
+      "verdict": "continue",
+      "candidates": []
+    },
+    {
+      "id": "near-miss-branch-different-work",
+      "task": "Fix the crash in the request path of the example app.",
+      "intent": "Fix the crash in app",
+      "files": ["src/app.py"],
+      "verdict": "continue",
+      "note": "The branch name is close to the task and the files are different work. No shared files is unrelated.",
+      "candidates": [
+        {
+          "kind": "branch",
+          "id": "fix-crash",
+          "title": "fix-crash",
+          "body": "",
+          "branch": "fix-crash",
+          "url": "",
+          "files": ["docs/banner.md"],
+          "label": "unrelated"
+        }
+      ]
+    },
+    {
+      "id": "mixed-duplicate-and-unrelated",
+      "task": "Fix the crash in the request path of the example app.",
+      "intent": "Fix the crash in app",
+      "files": ["src/app.py", "tests/test_app.py"],
+      "verdict": "ask",
+      "candidates": [
+        {
+          "kind": "pr",
+          "id": "1",
+          "title": "Fix the crash in app",
+          "body": "The crash is in the request path.",
+          "branch": "fix-crash",
+          "url": "https://github.com/example-org/example-repo/pull/1",
+          "files": ["src/app.py", "tests/test_app.py"],
+          "label": "duplicate"
+        },
+        {
+          "kind": "branch",
+          "id": "docs-banner",
+          "title": "docs-banner",
+          "body": "",
+          "branch": "docs-banner",
+          "url": "",
+          "files": ["docs/banner.md"],
+          "label": "unrelated"
+        }
+      ]
+    },
+    {
+      "id": "mixed-related-and-unrelated",
+      "task": "Fix the crash in the request path of the example app.",
+      "intent": "Fix the crash in app",
+      "files": ["src/app.py"],
+      "verdict": "ask",
+      "candidates": [
+        {
+          "kind": "pr",
+          "id": "2",
+          "title": "Rename the banner",
+          "body": "Cosmetic copy only.",
+          "branch": "banner",
+          "url": "https://github.com/example-org/example-repo/pull/2",
+          "files": ["src/app.py"],
+          "label": "related"
+        },
+        {
+          "kind": "pr",
+          "id": "3",
+          "title": "Update readme",
+          "body": "Docs only.",
+          "branch": "docs-readme",
+          "url": "https://github.com/example-org/example-repo/pull/3",
+          "files": ["README.md"],
+          "label": "unrelated"
+        }
+      ]
+    },
+    {
+      "id": "mixed-text-matches-without-files",
+      "task": "Fix the crash in the request path of the example app.",
+      "intent": "Fix the crash in app",
+      "files": ["src/app.py", "tests/test_app.py"],
+      "verdict": "continue",
+      "note": "A matching issue title and a matching worker title with no file lists are unrelated, and so is a pull request that touches other files.",
+      "candidates": [
+        {
+          "kind": "issue",
+          "id": "9",
+          "title": "Fix the crash in app",
+          "body": "The crash is in the request path.",
+          "branch": "",
+          "url": "https://github.com/example-org/example-repo/issues/9",
+          "files": [],
+          "label": "unrelated"
+        },
+        {
+          "kind": "worker",
+          "id": "task_other",
+          "title": "Fix the crash in app",
+          "body": "",
+          "branch": "",
+          "url": "",
+          "files": [],
+          "label": "unrelated"
+        },
+        {
+          "kind": "pr",
+          "id": "3",
+          "title": "Update readme",
+          "body": "Docs only.",
+          "branch": "docs-readme",
+          "url": "https://github.com/example-org/example-repo/pull/3",
+          "files": ["README.md"],
+          "label": "unrelated"
+        }
+      ]
+    },
+    {
+      "id": "adversarial-short-title",
+      "task": "Fix the crash in the request path of the example app.",
+      "intent": "Fix the crash in app",
+      "files": ["src/app.py"],
+      "verdict": "ask",
+      "note": "The title app is contained in the intent. With shared files the rule says duplicate.",
+      "candidates": [
+        {
+          "kind": "pr",
+          "id": "8",
+          "title": "app",
+          "body": "",
+          "branch": "app-topic",
+          "url": "https://github.com/example-org/example-repo/pull/8",
+          "files": ["src/app.py"],
+          "label": "duplicate"
+        }
+      ]
+    },
+    {
+      "id": "adversarial-intent-inside-word",
+      "task": "Add log lines around the request parser.",
+      "intent": "log",
+      "files": ["src/app.py"],
+      "verdict": "ask",
+      "note": "The check is a substring. log is contained in catalog. With shared files the rule says duplicate.",
+      "candidates": [
+        {
+          "kind": "pr",
+          "id": "11",
+          "title": "Rename the catalog",
+          "body": "Catalog headings only.",
+          "branch": "catalog",
+          "url": "https://github.com/example-org/example-repo/pull/11",
+          "files": ["src/app.py"],
+          "label": "duplicate"
+        }
+      ]
+    },
+    {
+      "id": "adversarial-hyphenated-branch",
+      "task": "Fix the crash in the request path of the example app.",
+      "intent": "Fix the crash in app",
+      "files": ["src/app.py", "tests/test_app.py"],
+      "verdict": "ask",
+      "note": "The branch touches the same files, but fix-the-crash-in-app does not contain the intent and is not contained in it. The rule says related.",
+      "candidates": [
+        {
+          "kind": "branch",
+          "id": "fix-the-crash-in-app",
+          "title": "fix-the-crash-in-app",
+          "body": "",
+          "branch": "fix-the-crash-in-app",
+          "url": "",
+          "files": ["src/app.py", "tests/test_app.py"],
+          "label": "related"
+        }
+      ]
+    },
+    {
+      "id": "adversarial-empty-intent",
+      "task": "The objective arrived blank. The planned files are still known.",
+      "intent": "",
+      "files": ["src/app.py"],
+      "verdict": "ask",
+      "note": "An empty intent does not count as appearing in the title. Shared files are related.",
+      "candidates": [
+        {
+          "kind": "pr",
+          "id": "1",
+          "title": "Fix the crash in app",
+          "body": "The crash is in the request path.",
+          "branch": "fix-crash",
+          "url": "https://github.com/example-org/example-repo/pull/1",
+          "files": ["src/app.py"],
+          "label": "related"
+        }
+      ]
+    }
+  ]
+}
