@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.0
+
+- The coordinator lands an independent pull request with `gantry ship <pr>` and removes the worktree with `gantry cleanup <task>`. It does not dispatch a `gantry-ship` or `gantry-cleanup` worker for that path. A stacked pull request still goes to one `gantry-ship` worker, because restack uses `--force-with-lease` and that step stays outside the coordinator. While `autoMerge` is false, the guard denies `gantry ship` and the ship worker still babysits.
+- `gantry ship` squash-merges only after green checks, with `--match-head-commit`, and deletes only a non-default branch this run recorded. It never force-pushes and never passes `--admin`, `--auto`, or `--force`. `gantry cleanup` removes a clean worktree that is not the main checkout and not the caller cwd, then marks the task completed. It never uses `--force`.
+- The coordinator prompt points at `gantry-ship.md` for the procedure. The guard still denies the coordinator `gh pr merge`, `git push`, and `git worktree remove`. The merge runs inside `gantry ship`.
+- `gantry --version` prints `0.3.0`.
+
 ## 0.2.3
 
 - `gantry install` and `gantry update` add `/.claude/worktrees/` to the checkout's `.git/info/exclude` when that directory is not already excluded. The line is local and idempotent. Nothing is committed. Claude Code can create that directory when a worker uses the Agent tool with worktree isolation; it stays out of `git status`.

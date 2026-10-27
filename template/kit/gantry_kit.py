@@ -22,7 +22,7 @@ try:
 except ImportError:  # pragma: no cover
     fcntl = None
 
-VERSION = "0.2.3"
+VERSION = "0.3.0"
 AGENT_NAME = "gantry-coordinator"
 HOOK_MARK = ".gantry/current/kit/"
 RUN_EVENTS = ("PreCompact", "SessionStart", "UserPromptSubmit")
@@ -37,6 +37,10 @@ USAGE = """usage: gantry install [repo] [--repair]
        gantry charter add [--global] '<rule>'
        gantry charter list
        gantry charter rm <id>
+       gantry ship <pr> [--task <id>] [--run <id>]
+       gantry cleanup <task> [--run <id>] [--dry-run]
+       gantry cleanup --scan [--run <id>]
+       gantry cleanup --finished [--run <id>] [--dry-run]
        gantry restart
        gantry --version
        gantry [objective]"""
@@ -1819,6 +1823,747 @@ def cmd_governed(argv):
     return 0
 
 
+PR_NUMBER = re.compile(r"(?:https://github\.com/([^/]+)/([^/]+)/pull/|#)?(\d+)$")
+PR_FIELDS = "number,state,baseRefName,headRefName,headRefOid,statusCheckRollup,mergeStateStatus,url,isDraft"
+SHIP_VALUED = {"--task", "--run"}
+CLEAN_VALUED = {"--run"}
+CLEAN_FLAGS = {"--dry-run", "--scan", "--finished", "--run"}
+SETTLED_STATUS = {"completed", "failed"}
+
+
+def invoke(argv, cwd=None, timeout=30):
+    proc = subprocess.run(argv, cwd=cwd, capture_output=True, text=True, timeout=timeout)
+    return proc.returncode, proc.stdout, proc.stderr
+
+
+def option_name(token):
+    if token.startswith("--") and "=" in token[2:]:
+        return token.split("=", 1)[0]
+    return token
+
+
+def banned_option(token):
+    name = option_name(token)
+    if name in {"--admin", "--auto", "--force", "-f"}:
+        return True
+    if name.startswith("--force") or name.startswith("--admin") or name.startswith("--auto"):
+        return True
+    if name.startswith("-") and not name.startswith("--") and "f" in name[1:]:
+        return True
+    return False
+
+
+def take_options(argv, valued):
+    flags, positionals = [], []
+    index = 0
+    while index < len(argv):
+        token = argv[index]
+        if token == "--":
+            positionals.extend(argv[index + 1:])
+            break
+        if token.startswith("-") and token != "-":
+            if banned_option(token):
+                die("gantry ship and gantry cleanup reject --admin, --auto, and --force")
+            name = option_name(token)
+            if token.startswith("--") and "=" in token:
+                flags.append((name, token.split("=", 1)[1]))
+                index += 1
+                continue
+            if name in valued:
+                if index + 1 >= len(argv):
+                    die(f"{name} needs a value")
+                flags.append((name, argv[index + 1]))
+                index += 2
+                continue
+            flags.append((name, ""))
+            index += 1
+            continue
+        positionals.append(token)
+        index += 1
+    return flags, positionals
+
+
+def paired_flags(flags):
+    found = {}
+    for name, value in flags:
+        found[name] = value
+    return found
+
+
+def emit(payload, code=0):
+    print(json.dumps(payload, separators=(",", ":")))
+    return code
+
+
+def read_auto_merge(common):
+    path = os.path.join(common, "gantry.json")
+    if not os.path.isfile(path):
+        return True
+    try:
+        data = json.load(open(path))
+    except (OSError, ValueError):
+        die(".git/gantry.json must be a JSON object")
+    if not isinstance(data, dict):
+        die(".git/gantry.json must be a JSON object")
+    if "autoMerge" not in data:
+        return True
+    value = data["autoMerge"]
+    if not isinstance(value, bool):
+        die("autoMerge in .git/gantry.json must be true or false")
+    return value
+
+
+def repo_context():
+    cwd = os.getcwd()
+    common = git_stdout(cwd, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    if not common:
+        die("not a git repository")
+    common = os.path.realpath(common)
+    root = os.path.dirname(common) if os.path.basename(common) == ".git" else os.path.realpath(cwd)
+    url = git_stdout(cwd, "config", "--get", "remote.origin.url") or ""
+    parsed = parse_remote(url)
+    if not parsed:
+        die(BAD_ORIGIN.format(url=url or "(missing)"))
+    ref = git_stdout(cwd, "symbolic-ref", "--short", "refs/remotes/origin/HEAD")
+    default = ref[len("origin/"):] if ref and ref.startswith("origin/") else "main"
+    return {
+        "root": root,
+        "common": common,
+        "slug": parsed["slug"],
+        "default": default,
+        "auto": read_auto_merge(common),
+    }
+
+
+def run_json(argv):
+    try:
+        code, out, err = invoke(argv)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return None, str(exc)[:400]
+    if code != 0:
+        return None, (err or out or "gh failed").strip()[:400]
+    try:
+        return json.loads(out or "null"), ""
+    except ValueError:
+        return None, "gh did not return JSON"
+
+
+def orca_call(*args):
+    try:
+        code, out, err = invoke(["orca", *args, "--json"], timeout=25)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return None, str(exc)[:400]
+    try:
+        data = json.loads(out) if out.strip() else {}
+    except ValueError:
+        return None, (err or "orca did not return JSON").strip()[:400]
+    if code != 0 or not isinstance(data, dict) or not data.get("ok"):
+        message = data.get("error") if isinstance(data, dict) else None
+        return None, str(message or err or "orca failed").strip()[:400]
+    result = data.get("result")
+    return (result if isinstance(result, dict) else {}), ""
+
+
+def bound_run(explicit):
+    if explicit:
+        return explicit, ""
+    result, err = orca_call("orchestration", "run-current")
+    if result is None:
+        return None, err
+    run = result.get("run")
+    if isinstance(run, dict) and run.get("id"):
+        return run["id"], ""
+    if isinstance(run, str) and run:
+        return run, ""
+    if result.get("id"):
+        return result["id"], ""
+    return None, "this terminal has no bound run"
+
+
+def paged(sub, run):
+    key = {"task-list": "tasks", "worker-list": "workers"}[sub]
+    rows, cursor = [], None
+    for _ in range(20):
+        args = ["orchestration", sub, "--run", run]
+        if cursor:
+            args.extend(["--cursor", cursor])
+        result, err = orca_call(*args)
+        if result is None:
+            return None, err
+        rows.extend(result.get(key) or [])
+        cursor = (result.get("page") or {}).get("nextCursor")
+        if not cursor:
+            return rows, ""
+    return rows, ""
+
+
+def mailbox_dir(run):
+    return os.path.join(os.environ.get("TMPDIR", "/tmp"), "gantry-mailbox", run)
+
+
+def read_jsonl(path):
+    rows = []
+    try:
+        handle = open(path)
+    except OSError:
+        return rows
+    with handle:
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rows.append(json.loads(line))
+            except ValueError:
+                continue
+    return rows
+
+
+def record_from_text(text, task):
+    pr = branch = ""
+    found = task or ""
+    for token in str(text or "").replace(",", " ").split():
+        if token.startswith("pr=") and token not in ("pr=none", "pr="):
+            pr = token[len("pr="):]
+        elif token.startswith("branch=") and token not in ("branch=none", "branch="):
+            branch = token[len("branch="):]
+        elif token.startswith("task=") and token not in ("task=none", "task=") and not found:
+            found = token[len("task="):]
+    if not pr and not branch:
+        return None
+    return {"task": found, "pr": pr, "branch": branch}
+
+
+def add_record(found, text, task):
+    row = record_from_text(text, task)
+    if row:
+        found.append(row)
+
+
+def load_records(run, tasks):
+    found = []
+    for task in tasks or []:
+        if not isinstance(task, dict):
+            continue
+        task_id = task.get("id") or ""
+        result = task.get("result")
+        if isinstance(result, (dict, list)):
+            result = json.dumps(result)
+        add_record(found, result, task_id)
+    if not run:
+        return found
+    for row in read_jsonl(os.path.join(mailbox_dir(run), "journal.jsonl")):
+        if not isinstance(row, dict):
+            continue
+        payload = row.get("payload") or {}
+        if isinstance(payload, str):
+            try:
+                payload = json.loads(payload)
+            except ValueError:
+                payload = {}
+        task_id = ""
+        if isinstance(payload, dict):
+            task_id = payload.get("taskId") or payload.get("task") or ""
+        add_record(found, row.get("body"), task_id)
+        if isinstance(payload, dict):
+            add_record(found, json.dumps(payload), task_id)
+    return found
+
+
+def pr_matches(recorded, number):
+    if not recorded or not number:
+        return False
+    text = str(recorded).rstrip("/")
+    if text in (str(number), f"#{number}"):
+        return True
+    return text.endswith(f"/pull/{number}")
+
+
+def parse_pr_token(token, slug):
+    match = PR_NUMBER.fullmatch((token or "").strip())
+    if not match:
+        die("gantry ship needs a pull request number or https://github.com/<owner>/<repo>/pull/<n>")
+    owner, repo, number = match.group(1), match.group(2), match.group(3)
+    if owner and repo:
+        want = f"{owner}/{repo}"
+        if slug != want and not slug.endswith("/" + want):
+            die(f"pull request {number} is not in {slug}")
+    return number
+
+
+def safe_branch(name, default):
+    if not name or name == default or name in {"HEAD", "origin"}:
+        return False
+    if name.startswith(("-", "+", ":")):
+        return False
+    if any(ch in name for ch in " \t~^:?*[\\"):
+        return False
+    return True
+
+
+def delete_push(repo, branch, default):
+    if not safe_branch(branch, default):
+        return None
+    argv = ["git", "-C", repo, "push", "origin", "--delete", branch]
+    if "--force" in argv or "-f" in argv or any(token.startswith("+") for token in argv):
+        return None
+    return argv
+
+
+def checks_green(view):
+    if view.get("isDraft") is True:
+        return False, "pull request is a draft"
+    rollup = view.get("statusCheckRollup")
+    if not isinstance(rollup, list) or not rollup:
+        return False, "no green checks"
+    for item in rollup:
+        if not isinstance(item, dict) or item.get("conclusion") != "SUCCESS":
+            return False, "checks are not green"
+    state = view.get("mergeStateStatus")
+    if state not in (None, "CLEAN", "HAS_HOOKS"):
+        return False, f"merge state is {state}"
+    return True, ""
+
+
+def matching_records(records, number, head, task_id):
+    matched = []
+    for rec in records:
+        if task_id and rec.get("task") and rec["task"] != task_id:
+            continue
+        if pr_matches(rec.get("pr"), number) or (rec.get("branch") and rec["branch"] == head):
+            matched.append(rec)
+    return matched
+
+
+def task_of_records(matched, requested):
+    if requested:
+        return requested
+    for rec in matched:
+        if rec.get("task"):
+            return rec["task"]
+    return ""
+
+
+def stack_reason(view, number, default, opens):
+    base = view.get("baseRefName") or ""
+    head = view.get("headRefName") or ""
+    if base and base != default:
+        return f"base {base} is not {default}; dispatch the ship worker"
+    for row in opens:
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("number")) == str(number):
+            continue
+        if head and row.get("baseRefName") == head:
+            return f"pull {row.get('number')} targets {head}; dispatch the ship worker"
+    return ""
+
+
+def mark_completed(task_id):
+    if not task_id:
+        return False, "no task id"
+    result, err = orca_call("orchestration", "task-update", "--task", task_id, "--status", "completed")
+    if result is None:
+        if "completed" in (err or "").lower():
+            return True, "already completed"
+        return False, err or "task-update failed"
+    return True, "completed"
+
+
+def release_dispatch(dispatch):
+    if not dispatch:
+        return True, ""
+    result, err = orca_call("orchestration", "worker-release", "--dispatch", dispatch)
+    if result is None:
+        if "release" in (err or "").lower():
+            return True, ""
+        return False, err or "worker-release failed"
+    return True, ""
+
+
+def ship_payload(number, status, reason, **extra):
+    payload = {"pr": str(number), "status": status, "reason": reason, "deleted": False}
+    payload.update(extra)
+    return payload
+
+
+def cmd_ship(argv):
+    flags, args = take_options(argv, SHIP_VALUED)
+    known = paired_flags(flags)
+    unknown = set(known) - SHIP_VALUED
+    if unknown:
+        die("gantry ship accepts only <pr>, --task, and --run")
+    if len(args) != 1:
+        die("usage: gantry ship <pr> [--task <id>] [--run <id>]")
+    ctx = repo_context()
+    number = parse_pr_token(args[0], ctx["slug"])
+    if not ctx["auto"]:
+        return emit(ship_payload(number, "held", "autoMerge is false in .git/gantry.json"))
+    run, run_err = bound_run(known.get("--run"))
+    tasks = []
+    if run:
+        loaded, _err = paged("task-list", run)
+        tasks = loaded or []
+    records = load_records(run, tasks)
+    if not run and not records:
+        return emit(ship_payload(number, "blocked", run_err or "could not read the run, so nothing was merged"))
+    view, err = run_json(["gh", "pr", "view", number, "--repo", ctx["slug"], "--json", PR_FIELDS])
+    if not isinstance(view, dict):
+        return emit(ship_payload(number, "blocked", err or "could not read the pull request"), 1)
+    head = view.get("headRefName") or ""
+    url = view.get("url") or ""
+    base = {
+        "url": url,
+        "branch": head,
+        "task": known.get("--task") or "",
+    }
+    if not safe_branch(head, ctx["default"]):
+        return emit(ship_payload(number, "blocked", "head is the default branch or is not a task branch", **base))
+    matched = matching_records(records, number, head, known.get("--task"))
+    if not matched:
+        return emit(ship_payload(number, "blocked", "this run has no record that it opened this pull request", **base))
+    task_id = task_of_records(matched, known.get("--task"))
+    base["task"] = task_id
+    state = str(view.get("state") or "").upper()
+    if state == "CLOSED":
+        return emit(ship_payload(number, "blocked", "pull request is closed", **base))
+    if state != "MERGED":
+        green, why = checks_green(view)
+        if not green:
+            return emit(ship_payload(number, "blocked", why, **base))
+        opens, list_err = run_json([
+            "gh", "pr", "list", "--repo", ctx["slug"], "--state", "open",
+            "--json", "number,baseRefName,headRefName",
+        ])
+        if not isinstance(opens, list):
+            return emit(ship_payload(number, "blocked", list_err or "could not list open pull requests", **base), 1)
+        stacked = stack_reason(view, number, ctx["default"], opens)
+        if stacked:
+            return emit(ship_payload(number, "stack", stacked, **base))
+        oid = view.get("headRefOid") or ""
+        if not re.fullmatch(r"[0-9a-fA-F]{7,64}", oid):
+            return emit(ship_payload(number, "blocked", "refusing to merge without the head sha", **base))
+        merge = ["gh", "pr", "merge", number, "--repo", ctx["slug"], "--squash", "--match-head-commit", oid]
+        if {"--admin", "--auto", "--force", "-f", "--delete-branch"} & set(merge):
+            die("refusing an unsafe merge")
+        try:
+            code, out, err = invoke(merge)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            return emit(ship_payload(number, "blocked", str(exc)[:400], **base), 1)
+        if code != 0:
+            return emit(ship_payload(number, "blocked", (err or out or "merge failed").strip()[:400], **base), 1)
+    owned_name = head if any(rec.get("branch") == head for rec in matched) else ""
+    deleted = False
+    delete_note = ""
+    argv = delete_push(ctx["root"], owned_name, ctx["default"]) if owned_name else None
+    if argv:
+        try:
+            code, out, err = invoke(argv)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            delete_note = str(exc)[:200]
+            code = 1
+        if code == 0:
+            deleted = True
+        else:
+            text = (err or out or "").strip()
+            delete_note = "" if "remote ref does not exist" in text or "does not exist" in text else text[:200]
+    elif not owned_name:
+        delete_note = "head branch was not recorded for this run"
+    ok, state_note = mark_completed(task_id)
+    reason = "squash-merged" if state != "MERGED" else "already merged"
+    if delete_note:
+        reason = f"{reason}; {delete_note}"
+    if not ok:
+        reason = f"{reason}; {state_note}"
+    return emit(ship_payload(
+        number, "landed", reason, deleted=deleted, state=state_note, **base,
+    ), 0 if ok else 1)
+
+
+def worker_path(row):
+    for key in ("worktreePath", "worktree", "cwd", "path"):
+        value = row.get(key)
+        if isinstance(value, str) and value.strip():
+            return os.path.realpath(os.path.expanduser(value.strip()))
+    return ""
+
+
+def live_paths(workers):
+    found = set()
+    for row in workers:
+        if row.get("dispatchStatus") in SETTLED_STATUS:
+            continue
+        path = worker_path(row)
+        if path:
+            found.add(path)
+    return found
+
+
+def github_merged(slug, branch):
+    data, err = run_json([
+        "gh", "pr", "list", "--repo", slug, "--head", branch, "--state", "merged", "--json", "number",
+    ])
+    if not isinstance(data, list):
+        return None, err or "could not ask GitHub"
+    return len(data) > 0, ""
+
+
+def head_on_origin(repo, branch):
+    try:
+        code, out, err = invoke(["git", "-C", repo, "ls-remote", "--exit-code", "--heads", "origin", branch])
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return None, str(exc)[:200]
+    if code == 0:
+        return True, ""
+    if code == 2:
+        return False, ""
+    return None, (err or out or "ls-remote failed").strip()[:200]
+
+
+def ahead_count(path, default):
+    try:
+        code, out, err = invoke(["git", "-C", path, "rev-list", "--count", f"origin/{default}..HEAD"])
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return None, str(exc)[:200]
+    if code != 0:
+        return None, (err or out or "rev-list failed").strip()[:200]
+    return out.strip(), ""
+
+
+def branch_removable(path, default, slug):
+    branch = git_stdout(path, "symbolic-ref", "--short", "-q", "HEAD") or ""
+    if not safe_branch(branch, default):
+        return False, "not a task branch"
+    merged, err = github_merged(slug, branch)
+    if merged is None:
+        return False, err
+    if merged:
+        return True, "merged"
+    present, err = head_on_origin(path, branch)
+    if present is None:
+        return False, err
+    if present:
+        return False, "branch is unmerged"
+    count, err = ahead_count(path, default)
+    if count is None:
+        return False, err
+    if count == "0":
+        return True, "gone from origin with no commits of its own"
+    return False, "branch has commits that are not on the default branch"
+
+
+def plan_cleanup(task_id, workers, ctx, cwd, live):
+    own = os.environ.get("ORCA_TERMINAL_HANDLE") or ""
+    if any(row.get("dispatchStatus") not in SETTLED_STATUS for row in workers):
+        return {"task": task_id, "op": "skip", "reason": "worker still running", "path": "", "handles": [], "dispatches": []}
+    path = ""
+    handles, dispatches = [], []
+    for row in workers:
+        handle = row.get("agentTerminalHandle") or ""
+        if handle and handle != own and handle not in handles:
+            handles.append(handle)
+        dispatch = row.get("dispatchId") or ""
+        if dispatch and dispatch not in dispatches:
+            dispatches.append(dispatch)
+        if not path:
+            path = worker_path(row)
+    if path and path in live:
+        return {"task": task_id, "op": "skip", "reason": "worktree of a worker that is still running", "path": path, "handles": [], "dispatches": []}
+    if path and os.path.realpath(path) == ctx["root"]:
+        return {"task": task_id, "op": "close", "reason": "main checkout stays", "path": path, "handles": handles, "dispatches": dispatches}
+    if path and os.path.realpath(path) == os.path.realpath(cwd):
+        return {"task": task_id, "op": "skip", "reason": "worktree is the caller cwd", "path": path, "handles": [], "dispatches": []}
+    if not path or not os.path.exists(path):
+        if handles or path:
+            return {
+                "task": task_id,
+                "op": "close",
+                "reason": "worktree already gone" if path else "no worktree",
+                "path": path,
+                "handles": handles,
+                "dispatches": dispatches,
+            }
+        return {"task": task_id, "op": "skip", "reason": "no worktree", "path": "", "handles": [], "dispatches": []}
+    try:
+        code, out, err = invoke(["git", "-C", path, "status", "--porcelain"])
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {"task": task_id, "op": "skip", "reason": str(exc)[:200], "path": path, "handles": [], "dispatches": []}
+    if code != 0:
+        return {"task": task_id, "op": "skip", "reason": (err or out or "status failed").strip()[:200], "path": path, "handles": [], "dispatches": []}
+    if out.strip():
+        return {"task": task_id, "op": "skip", "reason": "worktree is dirty", "path": path, "handles": [], "dispatches": []}
+    ok, why = branch_removable(path, ctx["default"], ctx["slug"])
+    if not ok:
+        return {"task": task_id, "op": "skip", "reason": why, "path": path, "handles": [], "dispatches": []}
+    return {"task": task_id, "op": "remove", "reason": why, "path": path, "handles": handles, "dispatches": dispatches}
+
+
+def act_cleanup(plan, ctx):
+    closed, errors = [], []
+    for handle in plan["handles"]:
+        try:
+            code, out, err = invoke(["orca", "terminal", "close", "--terminal", handle, "--json"])
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            errors.append(str(exc)[:200])
+            continue
+        if code != 0:
+            errors.append((err or out or "terminal close failed").strip()[:200])
+        else:
+            closed.append(handle)
+    removed = ""
+    remove_error = ""
+    if plan["op"] == "remove":
+        argv = ["git", "-C", ctx["root"], "worktree", "remove", plan["path"]]
+        if "--force" in argv or "-f" in argv:
+            die("gantry cleanup never uses --force")
+        try:
+            code, out, err = invoke(argv)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            remove_error = str(exc)[:200]
+            code = 1
+        if code != 0 and not remove_error:
+            remove_error = (err or out or "worktree remove failed").strip()[:200]
+        elif code == 0:
+            removed = plan["path"]
+    state = ""
+    ok = True
+    if plan["op"] != "remove" or removed:
+        ok, state = mark_completed(plan["task"])
+        if not ok:
+            errors.append(state)
+        for dispatch in plan["dispatches"]:
+            released, note = release_dispatch(dispatch)
+            if not released:
+                errors.append(note)
+    if remove_error:
+        errors.append(remove_error)
+        status = "error"
+    elif not ok:
+        status = "error"
+    elif removed:
+        status = "removed"
+    else:
+        status = "closed"
+    return {
+        "task": plan["task"],
+        "status": status,
+        "op": plan["op"],
+        "reason": plan["reason"],
+        "path": plan["path"],
+        "removed": removed,
+        "closed": closed,
+        "state": state,
+        "errors": errors,
+    }
+
+
+def cmd_cleanup(argv):
+    flags, tasks = take_options(argv, CLEAN_VALUED)
+    known = paired_flags(flags)
+    unknown = set(known) - CLEAN_FLAGS
+    if unknown:
+        die("gantry cleanup accepts a task id, --scan, --finished, --dry-run, and --run")
+    scan = "--scan" in known
+    finished = "--finished" in known
+    dry = "--dry-run" in known or scan
+    if scan and (tasks or finished):
+        die("gantry cleanup --scan takes no tasks")
+    if finished and tasks:
+        die("gantry cleanup --finished takes no tasks")
+    if not scan and not finished and not tasks:
+        die("usage: gantry cleanup <task> [--dry-run] [--run <id>]")
+    ctx = repo_context()
+    runs, err = cleanup_runs(known.get("--run"))
+    if not runs:
+        die(err or "no run")
+    workers, errors = collect_workers(runs)
+    if errors and not workers:
+        die(errors[0])
+    by_task = {}
+    for row in workers:
+        task_id = row.get("taskId") or ""
+        if task_id:
+            by_task.setdefault(task_id, []).append(row)
+    if scan or finished:
+        chosen = sorted(by_task)
+    else:
+        chosen = tasks
+    live = live_paths(workers)
+    code = 0
+    for task_id in chosen:
+        rows = by_task.get(task_id) or []
+        if not rows:
+            line = {"task": task_id, "status": "skipped", "op": "skip", "reason": "no worker for this task", "path": "", "removed": "", "closed": [], "state": "", "errors": []}
+            print(json.dumps(line, separators=(",", ":")))
+            continue
+        plan = plan_cleanup(task_id, rows, ctx, os.getcwd(), live)
+        if dry or (finished and plan["op"] == "skip") or plan["op"] == "skip":
+            if not dry and finished and plan["op"] == "skip":
+                shown = "skipped"
+            elif dry:
+                shown = "dry-run"
+            else:
+                shown = "skipped"
+            line = {
+                "task": task_id,
+                "status": shown,
+                "op": plan["op"],
+                "reason": plan["reason"],
+                "path": plan["path"],
+                "removed": "",
+                "closed": [],
+                "state": "",
+                "errors": [],
+            }
+            print(json.dumps(line, separators=(",", ":")))
+            continue
+        line = act_cleanup(plan, ctx)
+        if line["status"] == "error":
+            code = 1
+        print(json.dumps(line, separators=(",", ":")))
+    return code
+
+
+def cleanup_runs(explicit):
+    if explicit:
+        return [explicit], ""
+    result, err = orca_call("orchestration", "run-list")
+    if result is None:
+        current, err2 = bound_run(None)
+        if current:
+            return [current], ""
+        return None, err or err2
+    raw = result.get("runs") if isinstance(result, dict) else None
+    runs = []
+    if isinstance(raw, list):
+        for row in raw:
+            if isinstance(row, dict) and row.get("id"):
+                runs.append(row["id"])
+            elif isinstance(row, str) and row:
+                runs.append(row)
+    if not runs:
+        current, err2 = bound_run(None)
+        if current:
+            return [current], ""
+        return None, "no run"
+    return runs, ""
+
+
+def collect_workers(runs):
+    rows, errors = [], []
+    for run in runs:
+        page, err = paged("worker-list", run)
+        if page is None:
+            errors.append(err or f"could not list workers for {run}")
+            continue
+        for row in page:
+            if isinstance(row, dict):
+                copied = dict(row)
+                copied["_run"] = run
+                rows.append(copied)
+    return rows, errors
+
+
 def dispatch(argv):
     if argv[:1] == ["--version"]:
         print(VERSION)
@@ -1839,6 +2584,10 @@ def dispatch(argv):
         return cmd_overlap(argv[1:])
     if command == "charter":
         return cmd_charter(argv[1:])
+    if command == "ship":
+        return cmd_ship(argv[1:])
+    if command == "cleanup":
+        return cmd_cleanup(argv[1:])
     if command == "restart":
         return cmd_restart(argv[1:])
     if command == "governed":

@@ -1,8 +1,8 @@
 # Ship and cleanup measurement
 
-This directory measures the span from a pull request being ready through cleanup. It does not change ship or cleanup. The coordinator still dispatches a `gantry-ship` worker and a `gantry-cleanup` worker. Those workers still merge, delete branches, remove worktrees, and report `worker_done`. A later change can run those steps from a skill file in the coordinator. This harness is how that change is checked for cost and for behavior.
+This directory measures the span from a pull request being ready through cleanup. An independent pull request is landed by the coordinator with `gantry ship` and cleaned up with `gantry cleanup`. A stacked pull request still goes to one `gantry-ship` worker, because restack uses `--force-with-lease`. This harness checks that path for cost and for behavior.
 
-The markers come from the kit. PR-ready is an executed command: an implementation worker's `worker_done` whose body carries a pull URL, or `worker-start --task-title gantry-ship`. Cleanup done is an executed `git worktree remove`, `orca worktree rm`, or a command that marks the task done (`task-update --status completed`, or a `worker_done` with `--outcome succeeded` and no pull URL). A `worker_done` with `--outcome failed`, or a body that says `not landed`, is a failure. The script reads argv after quotes are stripped. Text inside a spec, and the coordinator prompt, name these commands and do not open or close a span.
+The markers come from the kit. PR-ready is an executed command: an implementation worker's `worker_done` whose body carries a pull URL, or `worker-start --task-title gantry-ship`. Cleanup done is an executed `git worktree remove`, `orca worktree rm`, an executed `gantry cleanup` that is not `--scan` or `--dry-run` (`gantry cleanup <task>` and `gantry cleanup --finished` count; `--scan` does not), or a command that marks the task done (`task-update --status completed`, or a `worker_done` with `--outcome succeeded` and no pull URL). A `worker_done` with `--outcome failed`, or a body that says `not landed`, is a failure. The script reads argv after quotes are stripped. Text inside a spec, and the coordinator prompt, name these commands and do not open or close a span. `gantry ship` and `gantry cleanup` are coordinator commands. They are not worker sessions.
 
 ## Correctness
 
@@ -79,7 +79,7 @@ python3 scripts/ship_efficiency.py --before <before>... --after <after>...
 
 The before run is separate workers. `task_slug` starts when the implementation worker reports the pull URL and ends when the cleanup worker runs `git worktree remove`. The coordinator's `worker-show` on that span is scaled by replay (1500 measured tokens, 1215 reported). `task_red` is a failed ship that still reaches `task-update --status completed`. `task_open` never reaches cleanup. `task_fast` is marked done with no ship worker. A user message and a spec quote name `worker-start --task-title gantry-ship` and `git worktree remove` and are not spans. The implementation file's `git status` jumps by 8000 tokens inside the slug window and is not added.
 
-The after run is the shape of the later fold, not a recording of it. The coordinator runs `gh pr checks`, the merge, `git worktree remove`, and `task-update` itself. It does not dispatch `gantry-ship` or `gantry-cleanup`. The same prompt text is in the file and is not a span.
+The after fixture is an older sketch of a fold, not a recording of this tree. In that file the coordinator runs `gh pr checks`, the merge, `git worktree remove`, and `task-update` itself, and it does not dispatch `gantry-ship` or `gantry-cleanup`. The same prompt text is in the file and is not a span. The live after-run of this tree is `gantry ship` then `gantry cleanup`. The harness counts an executed `gantry cleanup` that is not `--scan` or `--dry-run` as cleanup done, and it counts `gantry ship` and `gantry cleanup` as the coordinator. The synthetic numbers below stay so the existing assertions still hold.
 
 ```sh
 python3 scripts/ship_efficiency.py \
@@ -159,7 +159,7 @@ cd "$GANTRY_SRC"
 
 Two objectives, one run each. Each objective names the function, the file, and the test, says there is one task and no stack, and says to just clean up after the merge. A vaguer objective makes the coordinator ask a scoping question, and the loop then waits until it times out. The suffix is new every run, so the file is not already on `main`.
 
-The session file contains the coordinator prompt, which names `git worktree remove` and `worker-start --task-title gantry-ship`. `cleanup_ready` does not search that text. It calls `ship_efficiency.run_has_end`, which matches an executed command: a worktree removal or a task marked done. Quoted text is ignored.
+The session file contains the coordinator prompt, which names `git worktree remove`, `gantry ship`, and `worker-start --task-title gantry-ship`. `cleanup_ready` does not search that text. It calls `ship_efficiency.run_has_end`, which matches an executed command: a worktree removal, an executed `gantry cleanup` that is not `--scan` or `--dry-run`, or a task marked done. Quoted text is ignored.
 
 A session belongs to this iteration only when its first stamped record is at or after the mark. Claude Code writes lines with no timestamp before that stamp, and it keeps appending to a session after the loop has seen an end command, so the file's modification time moves while the session is still the previous iteration. Modification time is not the start. The cleanup worker uses the main checkout, the same cwd as the coordinator, and an Orca worker uses its own worktree, so the loop also requires the session to be this checkout: the cwd is `$CHECKOUT` or another worktree of the same repository, or the file contains this iteration's token (`slug_<stamp>` or `word_<stamp>`, and the same token with a hyphen). `copy_sessions` uses that same rule. A Claude Code subagent is included only when its parent session is. One that belongs to the previous run does not become this run because its own first stamp is later.
 
@@ -251,15 +251,15 @@ done
 python3 "$GANTRY_SRC/scripts/ship_efficiency.py" --before "$BASE/before"
 ```
 
-Claude Code names a project directory by the worktree path. The ship worker and the cleanup worker use their own directories, so the loop searches every jsonl under `~/.claude/projects`, not only the coordinator's project directory. `copy_sessions` puts each run in its own subdirectory. `ship_efficiency.py` treats each subdirectory as its own run.
+Claude Code names a project directory by the worktree path. An independent run executes `gantry ship` and `gantry cleanup` in the coordinator session, on the main checkout. A stacked run still has a `gantry-ship` worker in its own directory. The loop searches every jsonl under `~/.claude/projects`, not only the coordinator's project directory. `copy_sessions` puts each run in its own subdirectory. `ship_efficiency.py` treats each subdirectory as its own run.
 
 The merge lands `src/slug_<stamp>.py` or `src/wordcount_<stamp>.py` on `main`. The next time you run the loop, `date +%s` is a new suffix. Leave the merged files in place.
 
 If you abandon a run that already started workers, follow the teardown in `.claude/skills/verify/features/orca-run.md`: note the run id from `orca orchestration run-list --json`, then `worker-stop` only that run's dispatches, and close only the terminal this loop created.
 
-### Rerun after ship and cleanup move into the coordinator
+### Rerun after the fold
 
-That fold is not in this tree. When a commit runs those steps from a skill file instead of dispatching `gantry-ship` and `gantry-cleanup`, install that kit and repeat the loop into a second directory. Each iteration still needs a new suffix, because the earlier runs merged.
+This tree is that fold. `gantry --version` prints `0.3.0`. An independent pull request is `gantry ship <pr> --task <id>`, then `gantry cleanup`. The coordinator does not dispatch `gantry-ship` or `gantry-cleanup` for that path. A stacked pull request still dispatches one `gantry-ship` worker. `run_has_end` closes the span on an executed `gantry cleanup <task>` or `gantry cleanup --finished`. `gantry cleanup --scan` and `gantry cleanup --dry-run` do not close it. Record the before column on a kit that still dispatches both workers, then install this kit and repeat the loop into a second directory. Each iteration still needs a new suffix, because the earlier runs merged.
 
 ```sh
 cd "$GANTRY_SRC"
@@ -268,7 +268,7 @@ git checkout <fold-commit>
 mkdir -p "$BASE/after"
 ```
 
-`update` prints `gantry: no PR opened`. Install still commits nothing in `$CHECKOUT`. Run the same loop with `copy_sessions` pointed at `$BASE/after` instead of `$BASE/before`. Then compare:
+`update` prints `gantry: no PR opened`. Install still commits nothing in `$CHECKOUT`. Run the same loop with `copy_sessions` pointed at `$BASE/after` instead of `$BASE/before`. The after sessions should show `gantry ship` and `gantry cleanup` in the coordinator transcript, and no `worker-start --task-title gantry-ship` or `gantry-cleanup` for an independent pull request. Then compare:
 
 ```sh
 python3 "$GANTRY_SRC/scripts/ship_efficiency.py" \

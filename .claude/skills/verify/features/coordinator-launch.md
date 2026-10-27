@@ -10,7 +10,7 @@
 - Passes the objective before `--disallowedTools`, which is variadic and would swallow it.
 - The coordinator's tool list is the agent's `tools:` allowlist minus `disallowedTools`: Bash, Read, Skill, ToolSearch, AskUserQuestion.
 - A new task stays `orca orchestration worker-start --spec`. To clarify or correct a worker already running, the agent reads that terminal, waits for `tui-idle`, then `orca terminal send --terminal <handle> --text '...' --enter`. The guard allows that send only for a worker of this run. The worker's own guard still applies to whatever it runs. Allow and deny payloads are in [guard.md](guard.md).
-- Cleanup runs when the user asks, and the coordinator offers the same list after ship. It scans every run, reports `close`, `remove`, or `skip` with a reason, and dispatches `gantry-cleanup` only for items the user confirmed. "Just clean up" confirms every finished item. A released `--worktree current` terminal still listed as settled `user_takeover` is closed. The main checkout stays. A terminal with no worker row is reported and left open.
+- An independent pull request is `gantry ship`. A stacked pull request still dispatches one `gantry-ship` worker so Shipping can restack. Cleanup runs when the user asks. `gantry cleanup --scan` lists each task as `close`, `remove`, or `skip`. `gantry cleanup <task>` acts on one confirmed task. `gantry cleanup --finished` is "just clean up". The coordinator does not dispatch `gantry-cleanup`. The main checkout stays, and a settled terminal there is closed. A terminal with no worker row is left open.
 
 ## How to get to it (user POV)
 

@@ -267,7 +267,11 @@ def test_inflight_worker_and_open_gate_outrank_ready_tasks():
             path = save_fixture(tmp, fixture([SETTLED], [], []))
             os.environ["GANTRY_ORCA_FIXTURE"] = path
             shipped, _handoff = run.refresh(repo)
-            assert shipped["next"] == "Every implementation task has settled. Dispatch the ship worker."
+            assert shipped["next"] == (
+                "Every implementation task has settled. "
+                "Read gantry-ship.md and run gantry ship for each independent PR. "
+                "A stacked PR still needs the ship worker."
+            )
             landing = task("task_land", "gantry-ship", "pending", [])
             path = save_fixture(tmp, fixture([SETTLED, landing], [], []))
             os.environ["GANTRY_ORCA_FIXTURE"] = path
@@ -292,7 +296,20 @@ def test_inflight_worker_and_open_gate_outrank_ready_tasks():
                 }) + "\n")
             filled, _handoff = run.refresh(repo)
             assert filled["tasks"][0]["pr"] == "https://github.com/example-org/example-repo/pull/9"
-            assert "Dispatch the ship worker." in filled["next"]
+            assert "gantry ship" in filled["next"]
+            common = subprocess.check_output(
+                ["git", "-C", repo, "rev-parse", "--path-format=absolute", "--git-common-dir"], text=True,
+            ).strip()
+            config_path = os.path.join(common, "gantry.json")
+            config = json.load(open(config_path))
+            config["autoMerge"] = False
+            with open(config_path, "w") as handle:
+                json.dump(config, handle)
+            held_merge, _handoff = run.refresh(repo)
+            assert held_merge["next"] == (
+                "Every implementation task has settled and autoMerge is false. "
+                "Dispatch the ship worker to babysit. Do not run gantry ship."
+            )
         finally:
             os.environ.clear()
             os.environ.update(saved)

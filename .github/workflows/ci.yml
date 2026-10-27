@@ -26,6 +26,7 @@ jobs:
           python3 tests/overlap_test.py
           python3 tests/overlap_eval_test.py
           python3 tests/ship_eval_test.py
+          python3 tests/ship_cmd_test.py
           python3 tests/registry_test.py
           python3 tests/charter_test.py
       - name: guard model
