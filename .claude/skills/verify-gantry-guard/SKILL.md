@@ -90,7 +90,7 @@ Each property is one sentence. The harm is what a user gets if it breaks. The gr
 
 Gantry 0.2.0 changed one promise on purpose and added one. worker-gantry was "The coordinator may run `gantry overlap` and nothing else under `gantry`." It then also allowed `gantry charter`, because the coordinator saves the user's standing rules with `gantry charter`. worker-home-write is new. `PROTECTED_PATH` is end-anchored and `check_write` did not expand `~`, so a worker Write of `~/.gantry/charters/global.json` was allowed before. The evidence is the guard commit `039bd7b` and the charter and `~/.gantry` rows in `tests/guard_test.py`.
 
-Gantry 0.3.0 extends worker-gantry again. It was "A worker cannot run `gantry` or `gantry_kit.py`. The coordinator may run `gantry overlap` and `gantry charter`, and nothing else under `gantry`." It is now the sentence in the table. The coordinator may run `gantry ship` and `gantry cleanup`. `gantry ship` is denied while `autoMerge` is false and when the argv carries `--admin`, `--auto`, or `--force`. `gantry cleanup` is denied when the argv carries `--force`. A worker still cannot run `gantry`. The coordinator is still denied every bash `gh pr merge`. The merge of an independent pull request runs inside `gantry ship`, which this hook does not see. The evidence commit is the sync commit in Coverage, once that pin names the guard that contains this promise, plus the ship and cleanup rows in `tests/guard_test.py` and `tests/ship_cmd_test.py`.
+Gantry 0.3.0 extends worker-gantry again. It was "A worker cannot run `gantry` or `gantry_kit.py`. The coordinator may run `gantry overlap` and `gantry charter`, and nothing else under `gantry`." It is now the sentence in the table. The coordinator may run `gantry ship` and `gantry cleanup`. `gantry ship` is denied while `autoMerge` is false and when the argv carries `--admin`, `--auto`, or `--force`. `gantry cleanup` is denied when the argv carries `--force`. A worker still cannot run `gantry`. The coordinator is still denied every bash `gh pr merge`. The merge of an independent pull request runs inside `gantry ship`, which this hook does not see. The evidence is the guard commit `e13cc98` and the ship and cleanup rows in `tests/guard_test.py` and `tests/ship_cmd_test.py`.
 
 The worker-home-write cases cover Write, Edit, MultiEdit, and NotebookEdit under `$HOME/.gantry`, the `~` form, `$HOME/.gantry` itself, and the ship worker. A sibling `$HOME/.gantry-notes`, Read, `cat`, the operator, and a dormant repo stay allowed.
 
@@ -100,9 +100,9 @@ A single-quoted `$(...)` stays allowed. The guard peels compound keywords and ch
 
 ## Coverage
 
-Sync commit: `039bd7b3e462bbc98abf0237e4e09ef19a5dd197`
+Sync commit: `e13cc9870d596deb39de71d2e526657aba3c8c18`
 
-Sync blob of `template/kit/gantry-guard.py`: `64713619ef6c7b2d34c68fe721544c021e7d7c66`
+Sync blob of `template/kit/gantry-guard.py`: `ed07e6a9e84d30d83316b0af2f96438af0908cf1`
 
 The run prints whether the hook file matches that blob. A shallow checkout that does not have the commit still compares `git hash-object` to the pinned blob. When the commit is present, its blob must equal the pin. Move both constants, and this section, only after you have read the hook at the new commit and the check still describes it.
 
