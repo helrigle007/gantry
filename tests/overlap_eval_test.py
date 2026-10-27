@@ -31,6 +31,7 @@ REQUIRED = (
     "mixed-related-and-unrelated",
     "adversarial-short-title",
     "adversarial-hyphenated-branch",
+    "related-owner-prefixed-branch",
 )
 
 

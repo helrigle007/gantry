@@ -94,7 +94,7 @@ def case_refresh_and_current(fx):
         (refreshed.returncode == 0, refreshed.stderr),
         ("refreshed ~/.gantry" in refreshed.stdout, refreshed.stdout),
         ("no PR opened" in refreshed.stdout, "update opens no PR"),
-        ("0.2.1 -> 0.2.1" in refreshed.stdout, refreshed.stdout),
+        ("0.2.2 -> 0.2.2" in refreshed.stdout, refreshed.stdout),
         (not os.path.exists(fx.gh_log), "gh was not called"),
         (again.returncode == 0 and "already matches the template" in again.stdout, again.stdout),
         (fx.git("rev-parse", "HEAD") == head, "operator HEAD unchanged"),
@@ -127,7 +127,7 @@ def case_tag(fx):
     os.makedirs(os.path.join(source, "bin"))
     shutil.copy(GANTRY, os.path.join(source, "bin", "gantry"))
     kit = os.path.join(source, "template", "kit", "gantry_kit.py")
-    write(kit, read(kit).replace('VERSION = "0.2.1"', 'VERSION = "9.9.9"', 1))
+    write(kit, read(kit).replace('VERSION = "0.2.2"', 'VERSION = "9.9.9"', 1))
     subprocess.run(["git", "init", "-q", "-b", "main", source], check=True)
     subprocess.run(["git", "-C", source, "-c", "user.name=t", "-c", "user.email=t@example.com", "add", "template", "bin"], check=True)
     subprocess.run(["git", "-C", source, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "-m", "tag me"], check=True)

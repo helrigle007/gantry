@@ -6,7 +6,7 @@
 
 - Two checkpoints. `scoped`, after the bug is reproduced or the feature is scoped, before any worker starts. `pre-pr`, right before the ship worker opens the pull request.
 - The script reads open pull requests in the target repo only (`gh pr list --json`, with changed files, branch, and body), remote branches with no pull request (`git ls-remote`), assigned open issues, and the run's own active workers. It ranks by exact shared path count and prints compact JSON. The `sees` field says pushed GitHub work only. Unpushed local branches are invisible.
-- Classification. Shared files and the intent contained in the title or body, or the title contained in the intent, is `duplicate` (`stop`). Shared files otherwise is `related` (`flag`). No shared files is `unrelated` (`ignore`). `verdict_of` is `stop` when any label is stop or flag, otherwise `continue`. The gather command writes `label` on every candidate and a top-level `verdict` of `continue` or `stop`.
+- Classification. Shared files and the intent contained in the title or body, or the title contained in the intent, is `duplicate` (`stop`). Shared files otherwise is `related` (`flag`). No shared files is `unrelated` (`ignore`). `verdict_of` is `stop` when any label is stop or flag, otherwise `continue`. The gather command writes `label` on every candidate and a top-level `verdict` of `continue` or `stop`. When `--task` matches the current task, that task's own pushed branch, active worker, and open pull request are dropped before classification. The match is the task id, the branch recorded for the task, and the branch checked out in its worktree. Title text is not an identity. Without enough information to identify the task, every candidate is still listed.
 - On `continue` the coordinator proceeds without asking. On `stop` it asks with AskUserQuestion, listing each duplicate or related candidate with its link and label, and records `--answer proceed` or `--answer hold`. The guard cannot see that question. The agent text requires it.
 - `gantry overlap --run <id>` appends a `gathered` event and then a `classified` event with that verdict. `--record classified|answered` still appends. `gantry_run.refresh` folds `overlap.jsonl` into `state.json`. A worker `gh pr create` is denied until the pre-pr checkpoint is cleared (`classified` with `continue`, or `answered` with `proceed`). `answered` with `hold` does not clear it.
 - The guard allows the coordinator to run `gantry overlap` and denies every other `gantry` subcommand.
@@ -29,7 +29,7 @@ $S guard "$V" coordinator repo Bash '{"command":"gantry overlap --checkpoint sco
 `tests/overlap_test.py` is the fixture. It seeds one real duplicate pull request, one same-file-but-unrelated pull request, and one unrelated pull request, then asserts the printed labels and the `stop` verdict. It records the check, clears it only after `proceed`, denies `gh pr create` until then, and confirms that skipping `pr_create_allowed` makes the deny assertion fail. A second gather with disjoint files auto-records `continue` and the guard allows `gh pr create`. The same run gathered again as `stop`, then `--answer hold`, keeps `gh pr create` denied until `--answer proceed`.
 
 ```sh
-python3 tests/overlap_test.py    # expects 3/3 passed
+python3 tests/overlap_test.py    # expects 4/4 passed
 ```
 
 ## Measurement

@@ -63,7 +63,7 @@ gantry --version
 
 Every coding task is checked twice. Once after the bug is reproduced or the feature is scoped, when the files and a one-line intent are known, before any worker starts. Again right before the ship worker opens the pull request.
 
-`gantry overlap` gathers the candidates, labels each one, and prints compact JSON with a top-level `verdict` of `continue` or `stop`. It reads open pull requests in the target repo (`gh pr list --json`, with changed files, branch, and body), remote branches with no pull request (`git ls-remote`), assigned open issues, and the run's own active workers. It ranks them by how many planned files they share. Shared files and a matching intent are `duplicate`. Shared files otherwise are `related`. No shared files are `unrelated`. Any duplicate or related candidate is `stop`. Otherwise the verdict is `continue`. The command records that classification.
+`gantry overlap` gathers the candidates, labels each one, and prints compact JSON with a top-level `verdict` of `continue` or `stop`. It reads open pull requests in the target repo (`gh pr list --json`, with changed files, branch, and body), remote branches with no pull request (`git ls-remote`), assigned open issues, and the run's own active workers. It ranks them by how many planned files they share. Shared files and a matching intent are `duplicate`. Shared files otherwise are `related`. No shared files are `unrelated`. Any duplicate or related candidate is `stop`. Otherwise the verdict is `continue`. The command records that classification. When `--task` identifies the current task, its own pushed branch, active worker, and open pull request are left out before that classification. The match is the task id, the branch recorded for the task, and the branch checked out in its worktree, not the title. A check that cannot identify the task still lists every candidate.
 
 On `continue` the coordinator proceeds. On `stop` it asks with AskUserQuestion, lists each duplicate or related candidate with its link and label, and records `--answer proceed` or `--answer hold`. It does not decide overlap by reading pull requests itself. Each check is folded into `state.json`.
 
@@ -187,7 +187,7 @@ Add:
 
 ## Layout
 
-- `bin/gantry` is the launcher. `gantry --version` prints `0.2.1`.
+- `bin/gantry` is the launcher. `gantry --version` prints `0.2.2`.
 - `template/kit/` is the source the launcher installs under `~/.gantry`.
 - `scripts/race-check.py <repo> [n] [timeout]` starts N new-child workers in parallel and times each first heartbeat. `scripts/ping-runs.py <repo> <n>` times coordinator responsiveness. `scripts/overlap_efficiency.py` compares overlap checks in coordinator transcripts. `scripts/ship_efficiency.py` compares the ship and cleanup span.
 - `evals/overlap/` is the duplicate-work measurement harness: golden cases, the correctness runner, and the transcript fixtures. `evals/ship/` is the same kind of harness for ship and cleanup.

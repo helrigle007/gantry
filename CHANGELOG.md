@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.2
+
+- `gantry overlap` leaves out the current task's own pushed branch, active worker, and open pull request before it classifies. It matches the task id, the branch recorded for that task, and the branch checked out in the task's worktree. Another task's branch that shares files is still a stop. A check that cannot identify the task is unchanged.
+- `gantry --version` prints `0.2.2`.
+
 ## 0.2.1
 
 - `gantry overlap` labels every candidate and prints a top-level `verdict` of `continue` or `stop`. It records that classification, so a `continue` clears the pre-pr check without a second command. On `stop` the coordinator asks, then records `--answer proceed` or `--answer hold`.
