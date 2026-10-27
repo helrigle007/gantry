@@ -40,6 +40,7 @@ What it writes:
 5. `.git/gantry.json` in the git common directory, seeded once and then kept. Worktrees share it.
 6. Trust for the main checkout in `~/.claude.json`.
 7. An entry in `~/.gantry/registry.json`, keyed by the normalized origin URL. SSH and HTTPS for the same repo share a key.
+8. `/.claude/worktrees/` in `.git/info/exclude`, when that directory is not already excluded. Claude Code creates it when a worker uses the Agent tool with worktree isolation. The line is local and idempotent. Install does not commit it.
 
 The guard allows every tool call until that origin is registered. After registration the coordinator and worker rules apply, including in a worktree created later with `git worktree add`. A missing role fails closed. When `~/.gantry/registry.json` is missing or unreadable, the guard and the pre-push hook do not deny every session on the machine. They fall back to `.git/gantry.json` in the current repo. A repo that has the file stays governed, and one that does not stays dormant. Each writes one stderr line telling you to run `gantry doctor`. `doctor` reports an unreadable registry as a failure. `gantry install` refuses to overwrite an unreadable registry unless you pass `--repair`. `--repair` rebuilds the registry from the checkouts it can still find, or starts empty and says so.
 
@@ -53,7 +54,7 @@ gantry doctor [repo]
 gantry --version
 ```
 
-`update` refreshes `~/.gantry` from the kit source, or from a git tag when you pass `--tag`. It swaps `current` only after the new tree loads. It re-merges user hooks and refreshes the agent. It opens no pull request. `gantry: no PR opened` is the last line.
+`update` refreshes `~/.gantry` from the kit source, or from a git tag when you pass `--tag`. It swaps `current` only after the new tree loads. It re-merges user hooks and refreshes the agent. When you pass a repo, it also adds `/.claude/worktrees/` to that repo's `.git/info/exclude` if the directory is not already excluded. It opens no pull request. `gantry: no PR opened` is the last line.
 
 `uninstall` drops one repo from the registry and removes Gantry's `pre-push` stub. It leaves that repo's charter in place, so installing again brings the rules back. `uninstall --all` removes the user-level hooks and the agent, restores the settings saved at first install when the remaining hooks match that file, and then removes `~/.gantry`. That deletes every charter. Copy `~/.gantry/charters` first if you want to keep your rules.
 
@@ -187,7 +188,7 @@ Add:
 
 ## Layout
 
-- `bin/gantry` is the launcher. `gantry --version` prints `0.2.2`.
+- `bin/gantry` is the launcher. `gantry --version` prints `0.2.3`.
 - `template/kit/` is the source the launcher installs under `~/.gantry`.
 - `scripts/race-check.py <repo> [n] [timeout]` starts N new-child workers in parallel and times each first heartbeat. `scripts/ping-runs.py <repo> <n>` times coordinator responsiveness. `scripts/overlap_efficiency.py` compares overlap checks in coordinator transcripts. `scripts/ship_efficiency.py` compares the ship and cleanup span.
 - `evals/overlap/` is the duplicate-work measurement harness: golden cases, the correctness runner, and the transcript fixtures. `evals/ship/` is the same kind of harness for ship and cleanup.

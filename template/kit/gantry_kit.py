@@ -22,7 +22,7 @@ try:
 except ImportError:  # pragma: no cover
     fcntl = None
 
-VERSION = "0.2.2"
+VERSION = "0.2.3"
 AGENT_NAME = "gantry-coordinator"
 HOOK_MARK = ".gantry/current/kit/"
 RUN_EVENTS = ("PreCompact", "SessionStart", "UserPromptSubmit")
@@ -694,6 +694,52 @@ def seed_config(common):
     shutil.copy(src, path)
 
 
+# Claude Code's Agent tool creates this inside the checkout when a worker asks
+# for worktree isolation. It is not part of the repo. info/exclude is local:
+# install does not commit it.
+WORKTREE_EXCLUDE = "/.claude/worktrees/"
+_WORKTREE_EXCLUDE_COVERED = {
+    "/.claude/worktrees/",
+    "/.claude/worktrees",
+    ".claude/worktrees/",
+    ".claude/worktrees",
+}
+
+
+def worktree_exclude_covered(text):
+    for line in (text or "").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if stripped in _WORKTREE_EXCLUDE_COVERED:
+            return True
+    return False
+
+
+def ensure_worktree_exclude(repo):
+    path = git_stdout(repo, "rev-parse", "--path-format=absolute", "--git-path", "info/exclude")
+    if not path:
+        return
+    directory = os.path.dirname(path)
+    os.makedirs(directory, exist_ok=True)
+    current = ""
+    if os.path.isfile(path):
+        with open(path) as handle:
+            current = handle.read()
+    if worktree_exclude_covered(current):
+        return
+    text = current
+    if text and not text.endswith("\n"):
+        text += "\n"
+    text += WORKTREE_EXCLUDE + "\n"
+    fd, tmp = tempfile.mkstemp(dir=directory)
+    with os.fdopen(fd, "w") as handle:
+        handle.write(text)
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(tmp, path)
+
+
 def write_trust(repo):
     store = os.path.join(os.path.expanduser("~"), ".claude.json")
     if not os.path.isfile(store):
@@ -815,6 +861,7 @@ def cmd_install(argv):
     install_agent()
     place_prepush(root)
     seed_config(common)
+    ensure_worktree_exclude(root)
     write_trust(root)
     probe_hooks(root)
     register(key, root)
@@ -853,6 +900,7 @@ def cmd_update(argv):
     if repo:
         root, _common = checkout_of(repo)
         place_prepush(root)
+        ensure_worktree_exclude(root)
     print(f"gantry: version {old} -> {new}")
     if changed:
         print("gantry: refreshed ~/.gantry")

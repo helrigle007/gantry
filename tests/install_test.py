@@ -192,7 +192,7 @@ def case_clean_home(fx):
         (not os.path.isdir(os.path.join(fx.repo, ".claude")), "no .claude directory in the repo"),
         (trust["projects"][os.path.realpath(fx.repo)]["hasTrustDialogAccepted"] is True, "trusts the main checkout"),
         ("gantry-guard.py" in settings and "exit 2" in settings, "user hook fails closed"),
-        ("0.2.2" in fx.run("--version").stdout, "version is 0.2.2"),
+        ("0.2.3" in fx.run("--version").stdout, "version is 0.2.3"),
     ]
 
 
@@ -414,13 +414,51 @@ def case_origin_unparseable(fx):
     ]
 
 
-def case_exclude_untouched(fx):
-    path = subprocess.check_output(["git", "-C", fx.repo, "rev-parse", "--path-format=absolute", "--git-path", "info/exclude"], text=True).strip()
+def exclude_path(repo):
+    return subprocess.check_output(
+        ["git", "-C", repo, "rev-parse", "--path-format=absolute", "--git-path", "info/exclude"],
+        text=True,
+    ).strip()
+
+
+def case_exclude_claude_worktrees(fx):
+    path = exclude_path(fx.repo)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w") as handle:
         handle.write("# mine\n*.log")
     fx.install()
-    return [(open(path).read() == "# mine\n*.log", "exclude file unchanged"), ("gantry" not in open(path).read(), "no gantry exclude line")]
+    text = open(path).read()
+    fx.install()
+    again = open(path).read()
+    worktree = os.path.join(fx.repo, ".claude", "worktrees", "agent-example")
+    os.makedirs(worktree)
+    with open(os.path.join(worktree, "scratch.txt"), "w") as handle:
+        handle.write("not part of the repo\n")
+    kept = os.path.join(fx.repo, ".claude", "keep.txt")
+    with open(kept, "w") as handle:
+        handle.write("visible\n")
+    ignored = subprocess.run(
+        ["git", "-C", fx.repo, "check-ignore", "-q", os.path.join(worktree, "scratch.txt")],
+    )
+    visible = subprocess.run(["git", "-C", fx.repo, "check-ignore", "-q", kept])
+    sh("git", "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "--allow-empty", "-m", "init", cwd=fx.repo)
+    wt = os.path.join(fx.tmp, "wt")
+    sh("git", "worktree", "add", "-q", "-b", "feat", wt, cwd=fx.repo)
+    # The line already covers every worktree. A second install must not duplicate it.
+    fx.run("install", wt)
+    covered = sum(1 for line in open(path) if line.strip() == "/.claude/worktrees/")
+    os.remove(kept)
+    only_worktrees = status(fx.repo)
+    return [
+        (text.startswith("# mine\n*.log\n"), "keeps the operator's exclude lines"),
+        ("/.claude/worktrees/" in text, "adds the worktree exclude"),
+        (again == text, "a second install does not append again"),
+        (covered == 1, f"one exclude line after a worktree install: {covered}"),
+        (ignored.returncode == 0, "a file under .claude/worktrees is ignored"),
+        (visible.returncode != 0, "another file under .claude is not ignored"),
+        (only_worktrees == "", f"worktrees alone stay out of status: {only_worktrees!r}"),
+        ("gantry" not in open(path).read(), "the exclude line is the pattern, not a commit"),
+    ]
 
 
 def case_foreign_status_and_prepush(fx):
@@ -445,7 +483,7 @@ def case_doctor(fx):
     text = result.stdout
     return [
         (result.returncode == 0, result.stderr),
-        ("version: 0.2.2" in text, text),
+        ("version: 0.2.3" in text, text),
         ("registered: https://github.com/example-user/example-fixture" in text, text),
         ("hooks: gantry guard present" in text, text),
         ("pre-push: gantry stub" in text, text),
@@ -457,7 +495,7 @@ CASES = [
     case_clean_home, case_allowing_hook_silent, case_hooks_kept, case_per_command_merge,
     case_idempotent, case_status_clean_and_worktree, case_unregistered_is_dormant,
     case_uninstall_restores, case_uninstall_one_repo, case_origin_shapes, case_origin_missing,
-    case_origin_unparseable, case_exclude_untouched, case_foreign_status_and_prepush, case_doctor,
+    case_origin_unparseable, case_exclude_claude_worktrees, case_foreign_status_and_prepush, case_doctor,
 ]
 
 

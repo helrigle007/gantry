@@ -28,7 +28,17 @@ with `--outcome failed`, or a body that says "not landed", counts as a failure
 whether or not the span closes.
 
 A directory of jsonl files is one run. A subdirectory of jsonl files is
-another run. Pass several runs as several directories.
+another run. Pass several runs as several directories. The file named on a
+span is the coordinator session in that run. An implementation worker can
+open the span; the line still names the coordinator.
+
+Claude Code Agent-tool subagents are transcripts named agent-*.jsonl, or any
+session whose records set isSidechain or agentId. They are not the
+coordinator and they are not ship or cleanup workers. Their commands do not
+open or close a span, and their tokens are not added.
+
+A single-quoted spec may contain an apostrophe as '\\''. That is one shell
+word. A semicolon or a pipe inside that word is not a command separator.
 
   python3 scripts/ship_efficiency.py --before <dir-or-jsonl>...
   python3 scripts/ship_efficiency.py --before <before>... --after <after>...
@@ -40,8 +50,11 @@ import json
 import os
 import re
 import shlex
+import shutil
+import subprocess
 import sys
 import tempfile
+import time
 from datetime import datetime
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -101,6 +114,13 @@ def split_segments(command):
             in_double = True
             buf.append(c)
             i += 1
+            continue
+        # Outside quotes, '\'' is how a single-quoted word holds an apostrophe.
+        # The backslash is not a separator, and the escaped character is not either.
+        if c == "\\" and i + 1 < n:
+            buf.append(c)
+            buf.append(command[i + 1])
+            i += 2
             continue
         if c in ";\n":
             flush()
@@ -383,8 +403,28 @@ def task_from_result(text):
     return None
 
 
+def is_subagent_session(path, records):
+    """Claude Code Agent-tool sidechain. Not a gantry coordinator or worker."""
+    if os.path.basename(path).startswith("agent-"):
+        return True
+    for record in records:
+        if record.get("isSidechain") is True or record.get("agentId"):
+            return True
+    return False
+
+
 def file_events(path):
     records = load_records(path)
+    base = os.path.basename(path)
+    if is_subagent_session(path, records):
+        return {
+            "path": path,
+            "file": base,
+            "role": "subagent",
+            "subagent": True,
+            "records": records,
+            "events": [],
+        }
     commands = commands_of(records)
     role = role_of(commands)
     events = []
@@ -425,6 +465,7 @@ def file_events(path):
         "path": path,
         "file": base,
         "role": role,
+        "subagent": False,
         "records": records,
         "events": events,
     }
@@ -599,15 +640,253 @@ def measure(span, sessions, events, shrink):
     return row
 
 
+def coordinator_file(span, sessions):
+    """The coordinator session that owns this span, when the run has one."""
+    coords = [session for session in sessions if session["role"] == "coordinator" and not session.get("subagent")]
+    if not coords:
+        return None
+    if len(coords) == 1:
+        return coords[0]["file"]
+    start = span.get("start_time")
+    end = span.get("end_time") or start
+
+    def score(session):
+        total = 0
+        for event in session["events"]:
+            stamp = event.get("time")
+            if stamp is None or start is None:
+                continue
+            if end is not None and start <= stamp <= end:
+                total += 3
+            elif stamp >= start:
+                total += 1
+        return total
+
+    best = max(coords, key=score)
+    if score(best) == 0:
+        return coords[0]["file"]
+    return best["file"]
+
+
 def rows_of(paths, shrink):
     sessions = [file_events(path) for path in paths]
     spans, events = build_spans(sessions)
+    for span in spans:
+        named = coordinator_file(span, sessions)
+        if named:
+            span["file"] = named
     return [measure(span, sessions, events, shrink) for span in spans]
 
 
 def file_has_end(path):
     session = file_events(path)
     return any(event["kind"] in END_KINDS for event in session["events"])
+
+
+def session_meta(path):
+    """First stamped record, cwd, session id, and whether this file is a subagent.
+
+    Claude Code writes records with no timestamp (last-prompt, mode, and the
+    like) before the first stamped line. The session start is that first stamp.
+    """
+    started = None
+    cwd = None
+    session = None
+    subagent = os.path.basename(path).startswith("agent-")
+    with open(path) as handle:
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                record = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(record, dict):
+                continue
+            if started is None:
+                started = parse_time(record.get("timestamp"))
+            if cwd is None and isinstance(record.get("cwd"), str) and record["cwd"]:
+                cwd = record["cwd"]
+            if session is None and isinstance(record.get("sessionId"), str) and record["sessionId"]:
+                session = record["sessionId"]
+            if record.get("isSidechain") is True or record.get("agentId"):
+                subagent = True
+    return {
+        "path": path,
+        "started": started,
+        "cwd": cwd,
+        "session": session,
+        "subagent": subagent,
+    }
+
+
+def _token_forms(token):
+    if not token:
+        return []
+    forms = [token]
+    if "_" in token:
+        swapped = token.replace("_", "-")
+        if swapped not in forms:
+            forms.append(swapped)
+    return forms
+
+
+def _common_dir(path, cache):
+    if not path or not os.path.isdir(path):
+        return None
+    key = os.path.realpath(path)
+    if key not in cache:
+        proc = subprocess.run(
+            ["git", "-C", key, "rev-parse", "--path-format=absolute", "--git-common-dir"],
+            capture_output=True, text=True,
+        )
+        value = proc.stdout.strip() if proc.returncode == 0 else ""
+        cache[key] = os.path.realpath(value) if value else None
+    return cache[key]
+
+
+def tied_to_checkout(cwd, checkout, cache):
+    if not cwd or not checkout:
+        return False
+    base = os.path.realpath(checkout) if os.path.isdir(checkout) else os.path.abspath(checkout)
+    real = os.path.realpath(cwd) if os.path.isdir(cwd) else cwd
+    if not os.path.isabs(real):
+        real = os.path.abspath(real)
+    if real == base or real.startswith(base + os.sep):
+        return True
+    if os.path.isdir(cwd) and os.path.isdir(checkout):
+        left = _common_dir(cwd, cache)
+        right = _common_dir(checkout, cache)
+        return bool(left and right and left == right)
+    return False
+
+
+def _cwd_mentioned(cwd, blob):
+    if not cwd or len(cwd) < 2 or not blob:
+        return False
+    start = 0
+    while True:
+        at = blob.find(cwd, start)
+        if at < 0:
+            return False
+        before = blob[at - 1] if at else ""
+        after = blob[at + len(cwd):at + len(cwd) + 1]
+        if before in ("", " ", "\t", "\n", "\"", "'", "`", "=", "(", "{", "[", ":") and after in (
+            "", " ", "\t", "\n", "\"", "'", "`", "\\", "|", ",", ";", "}", ")", "]", ":",
+        ):
+            return True
+        start = at + 1
+
+
+def iter_jsonl(root):
+    if not root or not os.path.isdir(root):
+        return []
+    found = []
+    for dirpath, _dirs, files in os.walk(root):
+        for name in files:
+            if name.startswith("._") or not name.endswith(".jsonl"):
+                continue
+            found.append(os.path.join(dirpath, name))
+    return found
+
+
+def _text(path, cache):
+    if path not in cache:
+        with open(path, errors="replace") as handle:
+            cache[path] = handle.read()
+    return cache[path]
+
+
+def sessions_for_run(root, mark_epoch, checkout=None, token=None):
+    """Jsonl files that belong to the iteration that started at mark_epoch.
+
+    A file counts when its first stamped record is at or after the mark.
+    Modification time does not. With a checkout or a token, the file also has
+    to be this run: its cwd is that checkout or another worktree of the same
+    repository, or the file contains the token (underscore or hyphen form).
+    A later pass adds a worker whose cwd the coordinator recorded, and a
+    Claude Code subagent whose sessionId is an included parent. A subagent is
+    never included on its own.
+    """
+    metas = []
+    for path in iter_jsonl(root):
+        try:
+            meta = session_meta(path)
+        except OSError:
+            continue
+        if meta["started"] is None or meta["started"].timestamp() < mark_epoch:
+            continue
+        metas.append(meta)
+    forms = _token_forms(token)
+    texts = {}
+    git_cache = {}
+
+    def token_hit(path):
+        if not forms:
+            return False
+        body = _text(path, texts)
+        return any(form in body for form in forms)
+
+    def primary(meta):
+        if meta["subagent"]:
+            return False
+        if not checkout and not forms:
+            return True
+        if checkout and tied_to_checkout(meta["cwd"], checkout, git_cache):
+            return True
+        return token_hit(meta["path"])
+
+    included = [meta for meta in metas if primary(meta)]
+    changed = True
+    while changed:
+        changed = False
+        included_paths = {meta["path"] for meta in included}
+        included_ids = {meta["session"] for meta in included if meta["session"]}
+        blob = "\n".join(_text(meta["path"], texts) for meta in included)
+        for meta in metas:
+            if meta["path"] in included_paths:
+                continue
+            take = False
+            if meta["subagent"] and meta["session"] and meta["session"] in included_ids:
+                take = True
+            elif not meta["subagent"] and _cwd_mentioned(meta["cwd"], blob):
+                take = True
+            if take:
+                included.append(meta)
+                changed = True
+    return [meta["path"] for meta in included]
+
+
+def run_has_end(root, mark_epoch, checkout=None, token=None):
+    for path in sessions_for_run(root, mark_epoch, checkout, token):
+        if file_has_end(path):
+            return True
+    return False
+
+
+def copy_run_sessions(root, mark_epoch, dest, checkout=None, token=None):
+    os.makedirs(dest, exist_ok=True)
+    copied = []
+    for path in sessions_for_run(root, mark_epoch, checkout, token):
+        target = os.path.join(dest, os.path.basename(path))
+        shutil.copy(path, target)
+        copied.append(target)
+    return copied
+
+
+def run_is_quiet(root, mark_epoch, checkout=None, token=None, quiet_seconds=15, now=None):
+    """True when every session that belongs to this run has stopped changing."""
+    if now is None:
+        now = time.time()
+    for path in sessions_for_run(root, mark_epoch, checkout, token):
+        try:
+            mtime = os.path.getmtime(path)
+        except OSError:
+            continue
+        if mtime > now - quiet_seconds:
+            return False
+    return True
 
 
 def mean(values):

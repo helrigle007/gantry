@@ -1,0 +1,2 @@
+{"type":"last-prompt","cwd":"__CHECKOUT__"}
+{"type":"assistant","timestamp":"2026-10-27T12:00:00Z","requestId":"old","message":{"usage":{"input_tokens":1000,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":8},"content":[{"type":"tool_use","id":"old","name":"Bash","input":{"command":"orca worktree rm --worktree path:__CHECKOUT__/slug-old"}}]},"cwd":"__CHECKOUT__","sessionId":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}
