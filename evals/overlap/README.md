@@ -19,8 +19,8 @@ python3 evals/overlap/score.py --classify module:function --verdict module:funct
 On the current `classify` and `verdict_of` (unchanged since v0.2.0):
 
 ```
-16/16 passed  exact-match 1.000
-classify 16/16  verdict_of 16/16
+17/17 passed  exact-match 1.000
+classify 17/17  verdict_of 17/17
 failures: none
 ```
 
@@ -43,6 +43,7 @@ No case fails. The cases still lock the sharp edges of the rule:
 | `adversarial-short-title` | ask | Title `app` is contained in the intent |
 | `adversarial-intent-inside-word` | ask | Intent `log` is contained in `catalog` |
 | `adversarial-hyphenated-branch` | ask | Branch `fix-the-crash-in-app` shares the files and is related, because the hyphens keep it from containing the intent |
+| `related-owner-prefixed-branch` | ask | Branch `example-user/wordcount-7` shares the planned files and does not contain the intent, so it is related. The command drops that branch only when it belongs to the current task |
 | `adversarial-empty-intent` | ask | An empty intent does not match the title; shared files are related |
 
 `python3 tests/overlap_eval_test.py` expects `9/9 passed`.

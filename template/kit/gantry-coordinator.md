@@ -34,7 +34,7 @@ Run this once per checkpoint:
 
 `gantry overlap --checkpoint <scoped|pre-pr> --intent "<one line>" --files <paths> --run <run> --task <task>`
 
-It labels each candidate and prints a top-level `verdict` of `continue` or `stop`. It records that classification. It only sees work pushed to GitHub, not unpushed local branches. Never decide overlap by inspecting PRs or branches yourself instead of running the command. Never rerun it for the same checkpoint unless the intent or the files changed.
+It labels each candidate and prints a top-level `verdict` of `continue` or `stop`. It records that classification. It drops this task's own pushed branch, active worker, and open pull request when `--task` matches that task. It only sees work pushed to GitHub, not unpushed local branches. Never decide overlap by inspecting PRs or branches yourself instead of running the command. Never rerun it for the same checkpoint unless the intent or the files changed.
 
 On `continue`, proceed without asking. On `stop`, ask the user with AskUserQuestion. List each duplicate or related candidate with its link and label. Then record the answer for either choice: `gantry overlap --record answered --checkpoint <same> --run <run> --task <task> --answer proceed` or `--answer hold`. A worker's `gh pr create` stays denied until the pre-pr verdict is `continue`, or the user answers `proceed`.
 
