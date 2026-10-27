@@ -14,8 +14,8 @@ When `autoMerge` is true, run this once per settled pull request whose base is t
 
 You may chain several of those with `;` in one Bash call. Read each JSON line.
 
-- `landed`: checks were green, the pull request was squash-merged at that head, and the head was deleted only when this run recorded that branch and it is not the default branch. The task is marked completed.
-- `blocked`: checks were not green, the pull request was closed unmerged, the head was the default branch, or this run has no record of the pull request. Do not clean up. Dispatch a fix task on the Bug fix playbook, Base set to that pull request's branch, ownership of that pull request only. The fix worker pushes to the same branch. Ship again after it settles.
+- `landed`: checks were green, or the repo has no Actions workflows and no required status checks, so an empty rollup is not a failure. The pull request was squash-merged at that head, and the head was deleted only when this run recorded that branch and it is not the default branch. The task is marked completed.
+- `blocked`: checks were red, pending, or failing; checks are configured but none registered after a short wait (`checks have not registered`); the pull request was closed unmerged; the head was the default branch; or this run has no record of the pull request. When the reason is `checks have not registered`, run `gantry ship` again. Do not ask and do not start a fix task. Any other blocked reason: do not clean up. Dispatch a fix task on the Bug fix playbook, Base set to that pull request's branch, ownership of that pull request only. The fix worker pushes to the same branch. Ship again after it settles.
 - `stack`: the base is not the default branch, or another open pull request targets this head. Do not retry `gantry ship`. Dispatch one ship worker for that stack. See Stacked pull requests.
 - `held`: `autoMerge` is false. You should not have run the command.
 

@@ -494,6 +494,40 @@
         {"command": "orca orchestration send --from term_ship --dispatch-capability cap --type worker_done --subject Landed --body 'Landed both PRs. Checks were green. Nothing remains. task=task_ship dispatch=ctx_ship pr=https://github.com/example-org/example-repo/pull/11 branch=feat/docs evidence=merged' --task-id task_ship --dispatch-id ctx_ship --outcome succeeded"}
       ],
       "expect": {"merge-green": true, "squash": true, "delete-own-branches": true, "remove-worktree": true, "update-state": true, "no-force-push": true}
+    },
+    {
+      "id": "no-checks-configured-may-merge",
+      "note": "An empty rollup may merge when the trace says no checks are configured.",
+      "created": ["feat/slug"],
+      "default_branch": "main",
+      "require_removal": true,
+      "main": "/tmp/example-checkout",
+      "cwd": "/tmp/example-checkout",
+      "commands": [
+        {"command": "gh pr view 9 --repo example-org/example-repo --json statusCheckRollup,mergeStateStatus", "result": {"mergeStateStatus": "CLEAN", "statusCheckRollup": [], "checksConfigured": false}},
+        {"command": "gh pr merge 9 --repo example-org/example-repo --squash --match-head-commit abcdef1"},
+        {"command": "git push origin --delete feat/slug"},
+        {"command": "git worktree remove /tmp/example-repo-slug"},
+        {"command": "orca orchestration send --from term_ship --dispatch-capability cap --type worker_done --subject Landed --body 'Landed the slug PR. No checks are configured. task=task_slug dispatch=ctx_ship pr=https://github.com/example-org/example-repo/pull/9 branch=feat/slug evidence=merged' --task-id task_slug --dispatch-id ctx_ship --outcome succeeded"}
+      ],
+      "expect": {"merge-green": true, "squash": true, "delete-own-branches": true, "remove-worktree": true, "update-state": true, "no-force-push": true}
+    },
+    {
+      "id": "empty-rollup-while-checks-configured",
+      "note": "An empty rollup is not green when checks are configured and have not registered.",
+      "created": ["feat/slug"],
+      "default_branch": "main",
+      "require_removal": true,
+      "main": "/tmp/example-checkout",
+      "cwd": "/tmp/example-checkout",
+      "commands": [
+        {"command": "gh pr view 9 --repo example-org/example-repo --json statusCheckRollup,mergeStateStatus", "result": {"mergeStateStatus": "CLEAN", "statusCheckRollup": [], "checksConfigured": true}},
+        {"command": "gh pr merge 9 --repo example-org/example-repo --squash --match-head-commit abcdef1"},
+        {"command": "git push origin --delete feat/slug"},
+        {"command": "git worktree remove /tmp/example-repo-slug"},
+        {"command": "orca orchestration send --from term_ship --dispatch-capability cap --type worker_done --subject Landed --body 'Landed the slug PR. task=task_slug dispatch=ctx_ship pr=https://github.com/example-org/example-repo/pull/9 branch=feat/slug evidence=merged' --task-id task_slug --dispatch-id ctx_ship --outcome succeeded"}
+      ],
+      "expect": {"merge-green": false, "squash": true, "delete-own-branches": true, "remove-worktree": true, "update-state": true, "no-force-push": true}
     }
   ]
 }

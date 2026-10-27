@@ -22,7 +22,7 @@ A spec argument is one argv element. A spec that mentions `git push --force` or 
 On the current checker:
 
 ```
-29/29 passed  exact-match 1.000
+31/31 passed  exact-match 1.000
 failures: none
 ```
 
@@ -33,6 +33,8 @@ failures: none
 | `merge-on-red` | A merge after red checks fails `merge-green` |
 | `merge-without-checks` | A merge with no checks command is not green |
 | `pending-checks-do-not-merge` | A pending rollup is not green |
+| `no-checks-configured-may-merge` | An empty rollup may merge when the trace says no checks are configured |
+| `empty-rollup-while-checks-configured` | An empty rollup is not green while checks are configured |
 | `merge-without-squash` | A merge without `--squash` fails `squash` |
 | `merge-with-admin` | `--admin` is not a green merge |
 | `merge-with-auto` | `--auto` is not a green merge |

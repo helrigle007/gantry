@@ -50,6 +50,13 @@ class World:
             "isDraft": False,
         }
         self.opens = []
+        self.view_queue = []
+        self.workflows = {"total_count": 0, "workflows": []}
+        self.required = None
+        self.rules = []
+        self.workflows_error = False
+        self.rules_error = False
+        self.sleeps = []
         self.merged_heads = set()
         self.merge_code = 0
         self.workers = []
@@ -148,7 +155,11 @@ class World:
     def gh(self, argv):
         if argv[1:3] == ["pr", "view"]:
             self.trace.append("view")
+            if self.view_queue:
+                self.view = self.view_queue.pop(0)
             return 0, json.dumps(self.view), ""
+        if argv[1:2] == ["api"]:
+            return self.api(argv[2] if len(argv) > 2 else "")
         if argv[1:3] == ["pr", "list"]:
             state = argv[argv.index("--state") + 1] if "--state" in argv else "open"
             if state == "merged":
@@ -166,6 +177,22 @@ class World:
                 return self.merge_code, "", "merge failed"
             return 0, "", ""
         return 1, "", "unexpected gh"
+
+    def api(self, path):
+        self.trace.append("api")
+        if path.endswith("/actions/workflows"):
+            if self.workflows_error:
+                return 1, "", "HTTP 500"
+            return 0, json.dumps(self.workflows), ""
+        if path.endswith("/protection/required_status_checks"):
+            if self.required is None:
+                return 1, "", "gh: Branch not protected (HTTP 404)"
+            return 0, json.dumps(self.required), ""
+        if "/rules/branches/" in path:
+            if self.rules_error:
+                return 1, "", "HTTP 500"
+            return 0, json.dumps(self.rules), ""
+        return 1, "", "unexpected api"
 
     def orca(self, argv):
         if argv[1:3] == ["orchestration", "task-update"]:
@@ -193,10 +220,12 @@ class World:
 
     def run(self, argv, cwd=None):
         saved_invoke = kit.invoke
+        saved_pause = kit.pause
         saved_cwd = os.getcwd()
         saved_tmp = os.environ.get("TMPDIR")
         saved_handle = os.environ.get("ORCA_TERMINAL_HANDLE")
         kit.invoke = self.invoke
+        kit.pause = lambda seconds: self.sleeps.append(seconds)
         os.environ["TMPDIR"] = self.tmp
         os.chdir(cwd or self.repo)
         out, err = io.StringIO(), io.StringIO()
@@ -205,6 +234,7 @@ class World:
                 code = kit.dispatch(argv)
         finally:
             kit.invoke = saved_invoke
+            kit.pause = saved_pause
             os.chdir(saved_cwd)
             if saved_tmp is None:
                 os.environ.pop("TMPDIR", None)
@@ -277,8 +307,8 @@ def test_ship_blocks_when_checks_are_not_green():
     cases = [
         ({"statusCheckRollup": [{"conclusion": "FAILURE"}]}, "checks are not green"),
         ({"statusCheckRollup": [{"conclusion": "SUCCESS"}], "mergeStateStatus": "BLOCKED"}, "merge state is BLOCKED"),
-        ({"statusCheckRollup": []}, "no green checks"),
         ({"statusCheckRollup": [{"conclusion": None}]}, "checks are not green"),
+        ({"statusCheckRollup": [{"conclusion": "PENDING"}]}, "checks are not green"),
         ({"isDraft": True}, "pull request is a draft"),
     ]
     for patch, reason in cases:
@@ -291,6 +321,8 @@ def test_ship_blocks_when_checks_are_not_green():
             assert line["reason"] == reason, (patch, line)
             assert merges_of(fx) == [], patch
             assert "delete" not in fx.trace, patch
+            assert "api" not in fx.trace, patch
+            assert fx.sleeps == [], patch
             assert fx.ref_exists("feat/slug")
         finally:
             tmp.cleanup()
@@ -632,6 +664,93 @@ def test_cleanup_skips_its_own_terminal_and_still_removes():
         tmp.cleanup()
 
 
+def fresh_view(fx, **patch):
+    view = dict(fx.view)
+    view.update(patch)
+    return view
+
+
+def test_ship_empty_rollup_depends_on_whether_checks_are_configured():
+    tmp, fx = world()
+    try:
+        fx.view["statusCheckRollup"] = []
+        code, line, _err = fx.ship(["9", "--task", "task_slug", "--run", "run_1"])
+        assert code == 0, line
+        assert line["status"] == "landed", line
+        assert fx.sleeps == []
+        assert merges_of(fx) == ["merge"]
+        assert fx.trace.count("view") == 1
+    finally:
+        tmp.cleanup()
+    tmp, fx = world()
+    try:
+        fx.workflows = {"total_count": 1, "workflows": [{"name": "ci", "state": "active"}]}
+        fx.view_queue = [
+            fresh_view(fx, statusCheckRollup=[]),
+            fresh_view(fx, statusCheckRollup=[{"conclusion": "SUCCESS"}]),
+        ]
+        code, line, _err = fx.ship(["9", "--task", "task_slug", "--run", "run_1"])
+        assert code == 0, line
+        assert line["status"] == "landed", line
+        assert fx.sleeps == [kit.CHECK_PAUSE]
+        assert fx.trace.count("view") == 2
+        assert merges_of(fx) == ["merge"]
+    finally:
+        tmp.cleanup()
+    tmp, fx = world()
+    try:
+        fx.workflows = {"total_count": 0, "workflows": []}
+        fx.required = {"contexts": ["ci"], "checks": []}
+        fx.view_queue = [
+            fresh_view(fx, statusCheckRollup=[]),
+            fresh_view(fx, statusCheckRollup=[{"conclusion": "SUCCESS"}]),
+        ]
+        code, line, _err = fx.ship(["9", "--run", "run_1"])
+        assert line["status"] == "landed", line
+        assert fx.sleeps == [kit.CHECK_PAUSE]
+    finally:
+        tmp.cleanup()
+    tmp, fx = world()
+    try:
+        fx.rules = [{"type": "required_status_checks", "parameters": {"required_status_checks": [{"context": "ci"}]}}]
+        fx.view_queue = [
+            fresh_view(fx, statusCheckRollup=[]),
+        ] + [fresh_view(fx, statusCheckRollup=[]) for _ in range(kit.CHECK_POLLS)]
+        code, line, _err = fx.ship(["9", "--run", "run_1"])
+        assert line["status"] == "blocked", line
+        assert line["reason"] == "checks have not registered"
+        assert fx.sleeps == [kit.CHECK_PAUSE] * kit.CHECK_POLLS
+        assert merges_of(fx) == []
+        assert fx.ref_exists("feat/slug")
+    finally:
+        tmp.cleanup()
+    tmp, fx = world()
+    try:
+        fx.workflows = {"total_count": 1, "workflows": [{"name": "ci"}]}
+        fx.view_queue = [
+            fresh_view(fx, statusCheckRollup=[]),
+            fresh_view(fx, statusCheckRollup=[{"conclusion": "FAILURE"}]),
+        ]
+        code, line, _err = fx.ship(["9", "--run", "run_1"])
+        assert line["status"] == "blocked", line
+        assert line["reason"] == "checks are not green"
+        assert fx.sleeps == [kit.CHECK_PAUSE]
+        assert merges_of(fx) == []
+    finally:
+        tmp.cleanup()
+    tmp, fx = world()
+    try:
+        fx.workflows_error = True
+        fx.view["statusCheckRollup"] = []
+        code, line, _err = fx.ship(["9", "--run", "run_1"])
+        assert line["status"] == "blocked", line
+        assert line["reason"] == "checks have not registered"
+        assert len(fx.sleeps) == kit.CHECK_POLLS
+        assert merges_of(fx) == []
+    finally:
+        tmp.cleanup()
+
+
 def test_ship_merge_argv_is_squash_at_the_verified_head():
     tmp, fx = world()
     captured = []
@@ -663,6 +782,7 @@ if __name__ == "__main__":
     test_ship_rejects_unsafe_flags()
     test_ship_skips_merge_when_already_merged_and_still_deletes()
     test_ship_blocks_a_closed_pr_and_a_failed_merge()
+    test_ship_empty_rollup_depends_on_whether_checks_are_configured()
     test_ship_merge_argv_is_squash_at_the_verified_head()
     test_cleanup_removes_a_merged_worktree_and_updates_state()
     test_cleanup_skips_dirty_unmerged_and_unpushed()
@@ -671,4 +791,4 @@ if __name__ == "__main__":
     test_cleanup_finished_removes_and_a_close_error_still_updates_state()
     test_cleanup_retries_state_when_the_worktree_is_already_gone()
     test_cleanup_skips_its_own_terminal_and_still_removes()
-    print("19/19 passed")
+    print("20/20 passed")

@@ -46,13 +46,15 @@ REQUIRED = (
     "lease-restack-allowed",
     "quoted-commands-are-not-actions",
     "stack-two-prs",
+    "no-checks-configured-may-merge",
+    "empty-rollup-while-checks-configured",
 )
 
 
 def test_cases_cover_the_rules_and_match_judge():
     cases = score.load_cases()
     by_id = {case["id"]: case for case in cases}
-    assert len(cases) == 29, len(cases)
+    assert len(cases) == 31, len(cases)
     for ident in REQUIRED:
         assert ident in by_id, ident
     owned = by_id["land-green-squash"]

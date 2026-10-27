@@ -16,6 +16,7 @@ sys.dont_write_bytecode = True
 import tempfile
 import time
 from dataclasses import dataclass
+from urllib.parse import quote
 
 try:
     import fcntl
@@ -2110,19 +2111,129 @@ def delete_push(repo, branch, default):
     return argv
 
 
-def checks_green(view):
+CHECK_POLLS = 4
+CHECK_PAUSE = 3
+
+
+def pause(seconds):
+    time.sleep(seconds)
+
+
+def checks_verdict(view):
+    """green, blocked, or empty. Empty is no rollup yet, not a failing check."""
     if view.get("isDraft") is True:
-        return False, "pull request is a draft"
+        return "blocked", "pull request is a draft"
     rollup = view.get("statusCheckRollup")
-    if not isinstance(rollup, list) or not rollup:
-        return False, "no green checks"
+    if rollup is None:
+        rollup = []
+    if not isinstance(rollup, list):
+        return "blocked", "could not read checks"
+    if not rollup:
+        return "empty", "no checks"
     for item in rollup:
         if not isinstance(item, dict) or item.get("conclusion") != "SUCCESS":
-            return False, "checks are not green"
+            return "blocked", "checks are not green"
     state = view.get("mergeStateStatus")
     if state not in (None, "CLEAN", "HAS_HOOKS"):
-        return False, f"merge state is {state}"
-    return True, ""
+        return "blocked", f"merge state is {state}"
+    return "green", ""
+
+
+def gh_api(path):
+    try:
+        code, out, err = invoke(["gh", "api", path])
+    except (OSError, subprocess.TimeoutExpired):
+        return None, "error"
+    if code == 0:
+        try:
+            return json.loads(out or "null"), ""
+        except ValueError:
+            return None, "error"
+    text = f"{err or ''}\n{out or ''}"
+    if "404" in text or "Not Found" in text:
+        return None, "absent"
+    return None, "error"
+
+
+def _nonempty(value):
+    return isinstance(value, list) and len(value) > 0
+
+
+def checks_configured(slug, branch):
+    """True when this repo expects checks. False when none are configured. None when unknown."""
+    unknown = False
+    configured = False
+    workflows, werr = gh_api(f"repos/{slug}/actions/workflows")
+    if werr == "error":
+        unknown = True
+    elif isinstance(workflows, dict):
+        count = workflows.get("total_count")
+        if (isinstance(count, int) and count > 0) or _nonempty(workflows.get("workflows")):
+            configured = True
+    encoded = quote(branch or "main", safe="")
+    protection, perr = gh_api(f"repos/{slug}/branches/{encoded}/protection/required_status_checks")
+    if perr == "error":
+        unknown = True
+    elif isinstance(protection, dict):
+        if _nonempty(protection.get("contexts")) or _nonempty(protection.get("checks")):
+            configured = True
+    rules, rerr = gh_api(f"repos/{slug}/rules/branches/{encoded}")
+    if rerr == "error":
+        unknown = True
+    else:
+        rows = rules
+        if isinstance(rules, dict):
+            rows = rules.get("rules") or []
+        if isinstance(rows, list):
+            for rule in rows:
+                if not isinstance(rule, dict) or rule.get("type") != "required_status_checks":
+                    continue
+                params = rule.get("parameters")
+                if not isinstance(params, dict):
+                    configured = True
+                    continue
+                if _nonempty(params.get("required_status_checks")):
+                    configured = True
+    if configured:
+        return True
+    if unknown:
+        return None
+    return False
+
+
+def resolve_checks(number, slug, view):
+    """Return the latest view and whether it may merge.
+
+    No Actions workflows and no required status checks means an empty rollup is
+    the whole story: nothing is configured, so the pull request can land. An
+    empty rollup when checks are configured is the post-push race. Poll a few
+    times. Red, pending, and failing checks block without waiting.
+    """
+    kind, why = checks_verdict(view)
+    if kind == "green":
+        return view, True, ""
+    if kind == "blocked":
+        return view, False, why
+    expected = checks_configured(slug, view.get("baseRefName") or "")
+    if expected is False:
+        state = view.get("mergeStateStatus")
+        if state not in (None, "CLEAN", "HAS_HOOKS"):
+            return view, False, f"merge state is {state}"
+        return view, True, ""
+    last = "checks have not registered"
+    for _ in range(CHECK_POLLS):
+        pause(CHECK_PAUSE)
+        nxt, err = run_json(["gh", "pr", "view", number, "--repo", slug, "--json", PR_FIELDS])
+        if not isinstance(nxt, dict):
+            return view, False, err or "could not read the pull request"
+        view = nxt
+        kind, why = checks_verdict(view)
+        if kind == "green":
+            return view, True, ""
+        if kind == "blocked":
+            return view, False, why
+        last = "checks have not registered"
+    return view, False, last
 
 
 def matching_records(records, number, head, task_id):
@@ -2228,9 +2339,16 @@ def cmd_ship(argv):
     if state == "CLOSED":
         return emit(ship_payload(number, "blocked", "pull request is closed", **base))
     if state != "MERGED":
-        green, why = checks_green(view)
+        view, green, why = resolve_checks(number, ctx["slug"], view)
+        if isinstance(view, dict):
+            head = view.get("headRefName") or head
+            url = view.get("url") or url
+            base["branch"] = head
+            base["url"] = url
         if not green:
             return emit(ship_payload(number, "blocked", why, **base))
+        if not safe_branch(head, ctx["default"]):
+            return emit(ship_payload(number, "blocked", "head is the default branch or is not a task branch", **base))
         opens, list_err = run_json([
             "gh", "pr", "list", "--repo", ctx["slug"], "--state", "open",
             "--json", "number,baseRefName,headRefName",
