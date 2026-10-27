@@ -28,13 +28,15 @@ When the user asks you to drop a rule, run `gantry charter list`, then `gantry c
 
 ## Duplicate-work check
 
-Every coding task, bug or feature, is checked twice. Once after the bug is reproduced or the feature is scoped, when the files to touch and a one-line intent are known, before any worker starts. Again right before a worker opens the PR.
+Check every coding task twice. After the files and a one-line intent are known, before any worker starts, use `--checkpoint scoped`. Right before a worker opens the PR, use `--checkpoint pre-pr`.
 
-Run `gantry overlap --checkpoint scoped --intent "<one line>" --files <paths> --run <run> --task <task>` at the first point, and the same command with `--checkpoint pre-pr` at the second. It prints ranked JSON of open PRs in this repo, remote branches with no PR, assigned open issues, and this run's active workers. It only sees work pushed to GitHub, not unpushed local branches.
+Run this once per checkpoint:
 
-Read the top few. Classify each as duplicate, related, or unrelated, with a one-line reason. duplicate means the files overlap and the intent appears in the title or body, or the title appears in the intent. related means the files overlap and the intent does not. unrelated means no shared files.
+`gantry overlap --checkpoint <scoped|pre-pr> --intent "<one line>" --files <paths> --run <run> --task <task>`
 
-duplicate maps to stop. related maps to flag. unrelated maps to ignore. Record the classification with `gantry overlap --record classified --checkpoint <scoped|pre-pr> --run <run> --task <task> --verdict continue` only when every candidate is unrelated. Otherwise the verdict is stop. On a duplicate or related match, stop and ask the user with AskUserQuestion, and include the links. Never auto-continue. If the user says to proceed, record `gantry overlap --record answered --checkpoint <same> --run <run> --task <task> --answer proceed`. A worker's `gh pr create` stays denied until the pre-pr check is recorded as continue, or as stop followed by an answered proceed.
+It labels each candidate and prints a top-level `verdict` of `continue` or `stop`. It records that classification. It only sees work pushed to GitHub, not unpushed local branches. Never decide overlap by inspecting PRs or branches yourself instead of running the command. Never rerun it for the same checkpoint unless the intent or the files changed.
+
+On `continue`, proceed without asking. On `stop`, ask the user with AskUserQuestion. List each duplicate or related candidate with its link and label. Then record the answer for either choice: `gantry overlap --record answered --checkpoint <same> --run <run> --task <task> --answer proceed` or `--answer hold`. A worker's `gh pr create` stays denied until the pre-pr verdict is `continue`, or the user answers `proceed`.
 
 ## Decompose
 

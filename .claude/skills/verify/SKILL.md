@@ -11,7 +11,7 @@ gantry has no server or UI. Its surfaces are:
 - `bin/gantry update [repo] [--tag <tag>]`: refreshes `~/.gantry` and re-merges user hooks. It opens no pull request.
 - The installed guard, `~/.gantry/current/kit/gantry-guard.py`: a user-level PreToolUse hook. It is dormant until the repo's origin is registered.
 - The installed `pre-push` stub: git's second wall under the guard, shared by every worktree.
-- `gantry overlap`: ranks pushed GitHub work against a planned change. The coordinator classifies it.
+- `gantry overlap`: ranks pushed GitHub work against a planned change, labels each candidate, and records `continue` or `stop`.
 - `bin/gantry [objective]`: execs `claude --agent gantry-coordinator` inside an Orca terminal, with `--autocompact` when `contextReset.mode` is `compact`. `gantry restart` starts a fresh session on the bound Run.
 - A full run: coordinator plus Orca workers against a fixture repo you control.
 
@@ -57,7 +57,7 @@ Tier 3 launches differently. See [features/orca-run.md](features/orca-run.md).
 $S doctor "$V"
 ```
 
-Every line must say `ok`. It checks the sandbox layout, the stored origin URL and pushurl, a clean `git status` after install, that the installed kit under `~/.gantry/current/kit` matches `template/kit/` byte for byte, that `gantry --version` is `0.2.0`, that user settings wire the guard, that the scratch `HOME` trusts the repo, that `.git/gantry.json` is the template, that a fresh worktree denies a coordinator `Write`, that the unregistered repo allows that same `Write`, that overlap classifies duplicate, related, and unrelated as stop, flag, and ignore, and that the installed kit contains none of the previous product name. The origin check reads `git config --get remote.origin.url`. A template mismatch means you edited `template/kit/` after `up`: run `down` and `up` again.
+Every line must say `ok`. It checks the sandbox layout, the stored origin URL and pushurl, a clean `git status` after install, that the installed kit under `~/.gantry/current/kit` matches `template/kit/` byte for byte, that `gantry --version` is `0.2.1`, that user settings wire the guard, that the scratch `HOME` trusts the repo, that `.git/gantry.json` is the template, that a fresh worktree denies a coordinator `Write`, that the unregistered repo allows that same `Write`, that overlap classifies duplicate, related, and unrelated as stop, flag, and ignore, and that the installed kit contains none of the previous product name. The origin check reads `git config --get remote.origin.url`. A template mismatch means you edited `template/kit/` after `up`: run `down` and `up` again.
 
 For tier 3, also run:
 

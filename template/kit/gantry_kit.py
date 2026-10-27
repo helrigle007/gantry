@@ -22,7 +22,7 @@ try:
 except ImportError:  # pragma: no cover
     fcntl = None
 
-VERSION = "0.2.0"
+VERSION = "0.2.1"
 AGENT_NAME = "gantry-coordinator"
 HOOK_MARK = ".gantry/current/kit/"
 RUN_EVENTS = ("PreCompact", "SessionStart", "UserPromptSubmit")
@@ -1206,6 +1206,16 @@ def cleared(run, task, checkpoint):
     return False
 
 
+def apply_classification(data):
+    labels = []
+    for candidate in data["candidates"]:
+        label = classify(data["intent"], data["files"], candidate)
+        candidate["label"] = label
+        labels.append(label)
+    data["verdict"] = verdict_of(labels)
+    return data
+
+
 def flag_map(argv):
     opts = {}
     index = 0
@@ -1239,17 +1249,27 @@ def cmd_overlap(argv):
         return 0
     repo = opts.get("repo") or "."
     files = [item for item in (opts.get("files") or "").split(",") if item]
-    data = gather(repo, files, opts.get("intent") or "")
+    data = apply_classification(gather(repo, files, opts.get("intent") or ""))
     print(json.dumps(data, separators=(",", ":")))
     if opts.get("run"):
+        checkpoint = opts.get("checkpoint") or "scoped"
         record_overlap(opts.get("run"), {
             "kind": "gathered",
-            "checkpoint": opts.get("checkpoint") or "scoped",
+            "checkpoint": checkpoint,
             "task": opts.get("task"),
             "run": opts.get("run"),
             "intent": data["intent"],
             "files": data["files"],
-            "candidates": [{"kind": item["kind"], "id": item["id"], "score": item["score"], "url": item["url"]} for item in data["candidates"][:8]],
+            "candidates": [{"kind": item["kind"], "id": item["id"], "score": item["score"], "label": item["label"], "url": item["url"]} for item in data["candidates"][:8]],
+        })
+        record_overlap(opts.get("run"), {
+            "kind": "classified",
+            "checkpoint": checkpoint,
+            "task": opts.get("task"),
+            "run": opts.get("run"),
+            "verdict": data["verdict"],
+            "answer": None,
+            "intent": opts.get("intent"),
         })
     return 0
 

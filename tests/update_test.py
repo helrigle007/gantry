@@ -61,7 +61,8 @@ def case_agent_brief(_fx):
         ("## Relaying instructions" in text, "agent has a relaying section"),
         ("## Duplicate-work check" in text, "agent checks for overlapping work"),
         ("unpushed local branches" in text, "overlap visibility is documented"),
-        ("Never auto-continue" in text, "a match always asks"),
+        ("proceed without asking" in text and "--answer hold" in text, "continue proceeds and both answers are recorded"),
+        ("inspecting PRs" in text and "unless the intent or the files changed" in text, "overlap is one command, not a manual scan"),
         ("AskUserQuestion" in text, "the ask is named"),
         ("when the user asks" in text, "cleanup runs on demand"),
         ("just clean up" in text, "an explicit clean-up request confirms the list"),
@@ -93,7 +94,7 @@ def case_refresh_and_current(fx):
         (refreshed.returncode == 0, refreshed.stderr),
         ("refreshed ~/.gantry" in refreshed.stdout, refreshed.stdout),
         ("no PR opened" in refreshed.stdout, "update opens no PR"),
-        ("0.2.0 -> 0.2.0" in refreshed.stdout, refreshed.stdout),
+        ("0.2.1 -> 0.2.1" in refreshed.stdout, refreshed.stdout),
         (not os.path.exists(fx.gh_log), "gh was not called"),
         (again.returncode == 0 and "already matches the template" in again.stdout, again.stdout),
         (fx.git("rev-parse", "HEAD") == head, "operator HEAD unchanged"),
@@ -126,7 +127,7 @@ def case_tag(fx):
     os.makedirs(os.path.join(source, "bin"))
     shutil.copy(GANTRY, os.path.join(source, "bin", "gantry"))
     kit = os.path.join(source, "template", "kit", "gantry_kit.py")
-    write(kit, read(kit).replace('VERSION = "0.2.0"', 'VERSION = "9.9.9"', 1))
+    write(kit, read(kit).replace('VERSION = "0.2.1"', 'VERSION = "9.9.9"', 1))
     subprocess.run(["git", "init", "-q", "-b", "main", source], check=True)
     subprocess.run(["git", "-C", source, "-c", "user.name=t", "-c", "user.email=t@example.com", "add", "template", "bin"], check=True)
     subprocess.run(["git", "-C", source, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "-m", "tag me"], check=True)

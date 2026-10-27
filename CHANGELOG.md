@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1
+
+- `gantry overlap` labels every candidate and prints a top-level `verdict` of `continue` or `stop`. It records that classification, so a `continue` clears the pre-pr check without a second command. On `stop` the coordinator asks, then records `--answer proceed` or `--answer hold`.
+- `gantry --version` prints `0.2.1`.
+
 ## 0.2.0
 
 - The coordinator saves your standing rules in your exact words with `gantry charter add`, and `gantry charter list` and `gantry charter rm <id>` show and remove them. A rule applies to the current repo, or to every repo with `--global`. Rules live in `~/.gantry/charters/`, outside every repo.
