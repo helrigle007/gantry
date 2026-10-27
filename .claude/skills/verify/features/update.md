@@ -7,7 +7,7 @@
 - Refreshes `~/.gantry` from the recorded install source, or from the checkout that contains `template/kit`. `--tag` uses `git archive` of that tag (`template/kit` and `bin/gantry`) and does not move the operator's branch.
 - Swaps `~/.gantry/current` with one rename after `python kit --version` succeeds. A release directory whose tree hash does not match the source is rebuilt.
 - Re-merges user hooks and refreshes the coordinator agent. A foreign status line stays. A coordinator file that is not Gantry's stays.
-- With a repo argument, refreshes the `pre-push` stub when it is absent or contains `gantry pre-push`. Leaves any other `pre-push` alone.
+- With a repo argument, refreshes the `pre-push` stub when it is absent or contains `gantry pre-push`. Leaves any other `pre-push` alone. Also adds `/.claude/worktrees/` to `.git/info/exclude` when that directory is not already excluded. The line is idempotent and is not committed. Update with no repo argument does not touch an exclude file.
 - Prints `gantry: version <old> -> <new>`, then either `refreshed ~/.gantry` or `already matches the template`, then `gantry: no PR opened`.
 - Does not commit in the target repo and does not run `gh pr create`. An update with no origin still exits 0.
 

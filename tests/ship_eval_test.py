@@ -196,6 +196,7 @@ def test_efficiency_of_the_synthetic_transcripts():
     assert before["spans"] == 3 and before["unclosed"] == 1 and before["failures"] == 1
     assert [row["task"] for row in before["rows"]] == ["task_slug", "task_red", "task_open", "task_fast"]
     assert before["rows"][0]["pr"] == "https://github.com/example-org/example-repo/pull/9"
+    assert before["rows"][0]["file"] == "synthetic-before-coordinator.jsonl"
     assert before["rows"][0]["turns"] == 3
     assert before["rows"][0]["tokens"] == tokens_a
     assert before["rows"][0]["workers"] == 2
@@ -311,6 +312,134 @@ def test_before_only_marks_after_as_not_recorded():
     assert "unclosed" in proc.stdout
 
 
+def test_quoted_spec_names_the_coordinator_and_skips_subagents():
+    fixture = os.path.join(ROOT, "evals", "ship", "fixtures", "attribution")
+    with tempfile.TemporaryDirectory() as tmp:
+        out = os.path.join(tmp, "out.json")
+        proc = subprocess.run(
+            [sys.executable, EFFICIENCY, "--json", out, "--before", fixture],
+            cwd=ROOT, capture_output=True, text=True,
+        )
+        assert proc.returncode == 0, proc.stderr
+        data = json.load(open(out))
+    assert data["before"]["spans"] == 1
+    assert data["before"]["unclosed"] == 0
+    row = data["before"]["rows"][0]
+    assert row["file"] == "coordinator.jsonl"
+    assert row["task"] == "task_slug"
+    assert row["closed"] is True
+    assert row["workers"] == 2
+    assert row["turns"] == 2
+    assert row["wall_seconds"] == 40
+    assert "coordinator.jsonl  task_slug" in proc.stdout
+    assert "impl.jsonl  task_slug" not in proc.stdout
+    assert "workers 2" in proc.stdout
+    assert efficiency.file_has_end(os.path.join(fixture, "agent-orca.jsonl")) is False
+    assert efficiency.file_has_end(os.path.join(fixture, "cleanup.jsonl")) is True
+
+
+def test_live_loop_counts_only_this_run():
+    mark = efficiency.parse_time("2026-10-27T13:00:00Z").timestamp()
+    src = os.path.join(ROOT, "evals", "ship", "fixtures", "isolation")
+
+    def fill(dest, names, replacements):
+        os.makedirs(dest, exist_ok=True)
+        for name in names:
+            text = open(os.path.join(src, name)).read()
+            for old, new in replacements.items():
+                text = text.replace(old, new)
+            with open(os.path.join(dest, name), "w") as handle:
+                handle.write(text)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        checkout = os.path.join(tmp, "checkout")
+        projects = os.path.join(tmp, "projects")
+        os.makedirs(checkout)
+        subprocess.run(["git", "init", "-q", "-b", "main", checkout], check=True, capture_output=True)
+        subprocess.run(
+            ["git", "-C", checkout, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "--allow-empty", "-m", "init"],
+            check=True, capture_output=True,
+        )
+        worktree = os.path.join(tmp, "worktree")
+        subprocess.run(
+            ["git", "-C", checkout, "worktree", "add", "-q", "-b", "feat", worktree],
+            check=True, capture_output=True,
+        )
+        fill(projects, [
+            "previous-cleanup.jsonl", "late-agent.jsonl", "current-coordinator.jsonl",
+        ], {"__CHECKOUT__": checkout})
+        previous = os.path.join(projects, "previous-cleanup.jsonl")
+        current = os.path.join(projects, "current-coordinator.jsonl")
+        os.utime(previous, None)
+        os.utime(current, (mark, mark))
+        assert efficiency.run_has_end(projects, mark, checkout, "word_200") is False
+        copied = efficiency.copy_run_sessions(projects, mark, os.path.join(tmp, "copied"), checkout, "word_200")
+        assert [os.path.basename(path) for path in copied] == ["current-coordinator.jsonl"]
+        assert efficiency.run_is_quiet(projects, mark, checkout, "word_200", 15) is True
+        os.utime(current, None)
+        assert efficiency.run_is_quiet(projects, mark, checkout, "word_200", 15) is False
+        fill(projects, ["current-cleanup.jsonl"], {"__CHECKOUT__": checkout})
+        fill(projects, ["worktree-worker.jsonl"], {"__WORKTREE__": worktree})
+        other = os.path.join(tmp, "other")
+        os.makedirs(other)
+        subprocess.run(["git", "init", "-q", "-b", "main", other], check=True, capture_output=True)
+        write_jsonl(os.path.join(projects, "alien.jsonl"), [
+            {
+                "type": "assistant",
+                "timestamp": "2026-10-27T13:12:00Z",
+                "cwd": other,
+                "sessionId": "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee",
+                "requestId": "z",
+                "message": {
+                    "usage": {
+                        "input_tokens": 10,
+                        "cache_creation_input_tokens": 0,
+                        "cache_read_input_tokens": 0,
+                        "output_tokens": 1,
+                    },
+                    "content": [tool_use("z", "git worktree remove /tmp/example-repo-other")],
+                },
+            },
+        ])
+        assert efficiency.run_has_end(projects, mark, checkout, "word_200") is True
+        names = sorted(
+            os.path.basename(path)
+            for path in efficiency.copy_run_sessions(projects, mark, os.path.join(tmp, "full"), checkout, "word_200")
+        )
+        assert names == ["current-cleanup.jsonl", "current-coordinator.jsonl", "worktree-worker.jsonl"]
+        # The worktree is gone, which is how copy runs after cleanup. The coordinator
+        # recorded it as path:<worktree>, and that session still belongs to this run.
+        os.rename(worktree, worktree + "-gone")
+        with open(os.path.join(projects, "current-coordinator.jsonl"), "a") as handle:
+            handle.write("\n")
+        noted = os.path.join(projects, "noted-worker.jsonl")
+        text = open(os.path.join(src, "worktree-worker.jsonl")).read().replace("__WORKTREE__", worktree)
+        text = text.replace("dddddddd-dddd-dddd-dddd-dddddddddddd", "ffffffff-ffff-ffff-ffff-ffffffffffff")
+        with open(noted, "w") as handle:
+            handle.write(text)
+        with open(os.path.join(projects, "current-coordinator.jsonl"), "a") as handle:
+            handle.write(json.dumps({
+                "type": "assistant",
+                "timestamp": "2026-10-27T13:16:00Z",
+                "cwd": checkout,
+                "sessionId": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+                "requestId": "note",
+                "message": {
+                    "content": [{
+                        "type": "tool_use",
+                        "id": "note",
+                        "name": "Bash",
+                        "input": {"command": "orca worktree rm --worktree path:" + worktree},
+                    }],
+                },
+            }) + "\n")
+        noted_names = [
+            os.path.basename(path)
+            for path in efficiency.copy_run_sessions(projects, mark, os.path.join(tmp, "noted"), checkout, "word_200")
+        ]
+        assert "noted-worker.jsonl" in noted_names
+
+
 def test_missing_transcript_is_an_error():
     proc = subprocess.run(
         [sys.executable, EFFICIENCY, "--before", os.path.join(ROOT, "no-such-transcript")],
@@ -358,5 +487,7 @@ if __name__ == "__main__":
     test_worker_files_close_the_span_and_add_tokens()
     test_runs_do_not_share_spans()
     test_before_only_marks_after_as_not_recorded()
+    test_quoted_spec_names_the_coordinator_and_skips_subagents()
+    test_live_loop_counts_only_this_run()
     test_missing_transcript_is_an_error()
-    print("11/11 passed")
+    print("13/13 passed")

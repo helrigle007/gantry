@@ -58,7 +58,7 @@ failures: none
 | `quoted-commands-are-not-actions` | Forbidden commands inside a spec are not actions |
 | `stack-two-prs` | Each PR is squash-merged only after its own green checks, and only created branches are deleted |
 
-`python3 tests/ship_eval_test.py` expects `11/11 passed`.
+`python3 tests/ship_eval_test.py` expects `13/13 passed`.
 
 ## Efficiency
 
@@ -102,6 +102,16 @@ wall seconds mean             21.7         2.5
 wall seconds median           20.0         2.5
 failures                         1           0
 unclosed                         1           0
+```
+
+The file named on a span is the coordinator session. An implementation worker's `worker_done` can open the span. The line still names the coordinator. `agent-*.jsonl` is a Claude Code Agent-tool subagent (`isSidechain` or `agentId`, and `sessionId` is the parent session). It is not a worker session. Its commands do not open or close a span, and its tokens are not added. Gantry worker rules tell a worker it may use the Agent tool. They do not tell the coordinator to, and the coordinator cannot: `Agent` is a disallowed tool. A subagent under `<checkout>/.claude/worktrees/` is that worker's worktree isolation. A subagent whose cwd is the Orca worker worktree is the same kind of sidechain. Neither counts.
+
+A single-quoted spec may hold an apostrophe as `'\''`. That is one shell word. A semicolon inside it is not a second command, so the real `worker-start` still counts and the quoted `worker-start` does not.
+
+`evals/ship/fixtures/attribution/` is a scrubbed shape of a live run, not a measured baseline. The coordinator spec uses `'\''` and a semicolon. The implementation worker opens the span. `agent-orca.jsonl` runs `git worktree remove` and `worker-start --task-title gantry-ship` five seconds later. Those commands are not the span.
+
+```
+coordinator.jsonl  task_slug  turns 2  tokens 0  workers 2  total 0  wall 40.0
 ```
 
 ## Live baseline
@@ -149,59 +159,49 @@ cd "$GANTRY_SRC"
 
 Two objectives, one run each. Each objective names the function, the file, and the test, says there is one task and no stack, and says to just clean up after the merge. A vaguer objective makes the coordinator ask a scoping question, and the loop then waits until it times out. The suffix is new every run, so the file is not already on `main`.
 
-The session file contains the coordinator prompt, which names `git worktree remove` and `worker-start --task-title gantry-ship`. `cleanup_ready` does not search that text. It calls `ship_efficiency.file_has_end`, which matches an executed command: a worktree removal or a task marked done. Quoted text is ignored.
+The session file contains the coordinator prompt, which names `git worktree remove` and `worker-start --task-title gantry-ship`. `cleanup_ready` does not search that text. It calls `ship_efficiency.run_has_end`, which matches an executed command: a worktree removal or a task marked done. Quoted text is ignored.
+
+A session belongs to this iteration only when its first stamped record is at or after the mark. Claude Code writes lines with no timestamp before that stamp, and it keeps appending to a session after the loop has seen an end command, so the file's modification time moves while the session is still the previous iteration. Modification time is not the start. The cleanup worker uses the main checkout, the same cwd as the coordinator, and an Orca worker uses its own worktree, so the loop also requires the session to be this checkout: the cwd is `$CHECKOUT` or another worktree of the same repository, or the file contains this iteration's token (`slug_<stamp>` or `word_<stamp>`, and the same token with a hyphen). `copy_sessions` uses that same rule. A Claude Code subagent is included only when its parent session is. One that belongs to the previous run does not become this run because its own first stamp is later.
+
+After the terminal closes, the loop waits until every session that belongs to this iteration has gone 15 seconds without a write, then copies. It does not start the next iteration while the previous one is still being written. The wait is at most 5 minutes. If the sessions are still changing, the loop copies what it has and stops.
+
+`evals/ship/fixtures/isolation/` is the scrubbed shape of that failure. `previous-cleanup.jsonl` starts before the mark, contains an executed end, and can have a newer modification time. `late-agent.jsonl` starts after the mark and is a subagent of that previous session. `current-coordinator.jsonl` is this iteration and has no end yet. The previous file does not make the iteration ready, and the copy is only the current coordinator.
 
 ```sh
 # bash 3.2 is enough. pipefail is off so a closed pipe does not abort the loop.
 set -eu
 mkdir -p "$BASE/before"
-cleanup_ready() {
-  python3 - "$GANTRY_SRC" "$1" <<'PY'
+run_py() {
+  python3 - "$GANTRY_SRC" "$@" <<'PY'
 import os, sys
 sys.path.insert(0, os.path.join(sys.argv[1], "scripts"))
 import ship_efficiency as ship
 mark = os.path.getmtime(sys.argv[2])
 root = os.path.join(os.path.expanduser("~"), ".claude", "projects")
-if not os.path.isdir(root):
-    sys.exit(1)
-for dirpath, _dirs, files in os.walk(root):
-    for name in files:
-        if not name.endswith(".jsonl"):
-            continue
-        path = os.path.join(dirpath, name)
-        try:
-            newer = os.path.getmtime(path) >= mark
-        except OSError:
-            continue
-        if newer and ship.file_has_end(path):
-            sys.exit(0)
-sys.exit(1)
+checkout = sys.argv[3]
+token = sys.argv[4]
+action = sys.argv[5]
+if action == "ready":
+    sys.exit(0 if ship.run_has_end(root, mark, checkout, token) else 1)
+if action == "quiet":
+    sys.exit(0 if ship.run_is_quiet(root, mark, checkout, token, 15) else 1)
+ship.copy_run_sessions(root, mark, sys.argv[6], checkout, token)
 PY
 }
+cleanup_ready() {
+  run_py "$1" "$CHECKOUT" "$2" ready
+}
+run_quiet() {
+  run_py "$1" "$CHECKOUT" "$2" quiet
+}
 copy_sessions() {
-  python3 - "$1" "$2" <<'PY'
-import os, shutil, sys
-mark = os.path.getmtime(sys.argv[1])
-dest = sys.argv[2]
-os.makedirs(dest, exist_ok=True)
-root = os.path.join(os.path.expanduser("~"), ".claude", "projects")
-for dirpath, _dirs, files in os.walk(root):
-    for name in files:
-        if not name.endswith(".jsonl"):
-            continue
-        path = os.path.join(dirpath, name)
-        try:
-            newer = os.path.getmtime(path) >= mark
-        except OSError:
-            continue
-        if newer:
-            shutil.copy(path, os.path.join(dest, os.path.basename(path)))
-PY
+  run_py "$1" "$CHECKOUT" "$3" copy "$2"
 }
 stamp=$(date +%s)
 n=0
 for kind in slug word; do
   n=$((n + 1))
+  token="${kind}_${stamp}"
   if [ "$kind" = slug ]; then
     objective="Add slug_$stamp: create src/slug_$stamp.py with def slug(text): return text.strip().lower().replace(\" \", \"-\") and tests/test_slug_$stamp.py with def test_slug(): assert slug(\"A B\") == \"a-b\". Change no other file. One task, one pull request, no stack. After the pull request merges, just clean up."
   else
@@ -216,7 +216,7 @@ for kind in slug word; do
   ready=0
   warned=0
   for i in $(seq 1 80); do
-    if cleanup_ready "$mark"; then
+    if cleanup_ready "$mark" "$token"; then
       ready=1
       break
     fi
@@ -230,13 +230,28 @@ for kind in slug word; do
     echo "timed out after 40 minutes waiting for an executed cleanup command for $handle" >&2
     exit 1
   fi
-  copy_sessions "$mark" "$BASE/before/${stamp}-${n}-${kind}"
   orca terminal close --terminal "$handle" --json
+  quiet=0
+  for i in $(seq 1 60); do
+    if run_quiet "$mark" "$token"; then
+      quiet=1
+      break
+    fi
+    if [ "$i" = 1 ]; then
+      echo "waiting until $token sessions stop changing before the next iteration" >&2
+    fi
+    sleep 5
+  done
+  copy_sessions "$mark" "$BASE/before/${stamp}-${n}-${kind}" "$token"
+  if [ "$quiet" != 1 ]; then
+    echo "sessions for $token were still changing; not starting another iteration" >&2
+    exit 1
+  fi
 done
 python3 "$GANTRY_SRC/scripts/ship_efficiency.py" --before "$BASE/before"
 ```
 
-Claude Code names a project directory by the worktree path. The ship worker and the cleanup worker use their own directories, so the loop searches every jsonl under `~/.claude/projects` written at or after the mark, not only the coordinator's project directory. `copy_sessions` puts each run in its own subdirectory. `ship_efficiency.py` treats each subdirectory as its own run.
+Claude Code names a project directory by the worktree path. The ship worker and the cleanup worker use their own directories, so the loop searches every jsonl under `~/.claude/projects`, not only the coordinator's project directory. `copy_sessions` puts each run in its own subdirectory. `ship_efficiency.py` treats each subdirectory as its own run.
 
 The merge lands `src/slug_<stamp>.py` or `src/wordcount_<stamp>.py` on `main`. The next time you run the loop, `date +%s` is a new suffix. Leave the merged files in place.
 
