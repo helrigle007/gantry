@@ -176,16 +176,18 @@ Five objectives, twice each, each in its own Orca terminal. Stop when the scoped
 
 The session file contains the coordinator prompt. A search for the words `gantry overlap --record` matches that prompt, and every session was copied after about 13 seconds, before a command ran. `overlap_ready` matches an executed tool call instead: a `"command"` field containing `gantry overlap --record`. Quoted text is ignored, so a worker spec that mentions the command does not count. On the labeling kit it also accepts the first overlap result whose JSON has a top-level `verdict` of `continue` or `stop`.
 
+Objectives must be fully specified, because a scoping question stops the session before the check.
+
 ```sh
 # bash 3.2 is enough. pipefail is off so a closed pipe from head does not abort the loop.
 set -eu
 mkdir -p "$BASE/before"
 objectives=(
-  "Fix the crash in app. The files are src/app.py and tests/test_app.py."
-  "Add retry-client. The file is src/client.py."
-  "Rename the banner. The file is src/app.py."
-  "Add a word-count helper. The files are src/wordcount.py and tests/test_wordcount.py."
-  "Add a slug helper. The files are src/slug.py and tests/test_slug.py."
+  "Fix the crash in app: make app() in src/app.py return 0 and make test_app() in tests/test_app.py assert app() == 0. The files are src/app.py and tests/test_app.py."
+  "Add retry-client: make client() in src/client.py return 2. The file is src/client.py."
+  "Rename the banner: make app() in src/app.py return \"banner\". The file is src/app.py."
+  "Add a word-count helper: make word_count(text) in src/wordcount.py return len(text.split()) and make test_word_count() in tests/test_wordcount.py assert word_count(\"a b\") == 2. The files are src/wordcount.py and tests/test_wordcount.py."
+  "Add a slug helper: make slug(text) in src/slug.py return text.strip().lower().replace(\" \", \"-\") and make test_slug() in tests/test_slug.py assert slug(\"A B\") == \"a-b\". The files are src/slug.py and tests/test_slug.py."
 )
 overlap_ready() {
   python3 - "$1" <<'PY'
@@ -247,6 +249,7 @@ for objective in "${objectives[@]}"; do
     echo "handle $handle objective $objective run $run"
     session=""
     ready=0
+    warned=0
     for _ in $(seq 1 60); do
       if [ -d "$proj" ]; then
         session=$(find "$proj" -name '*.jsonl' -newer "$mark" -exec ls -t {} + 2>/dev/null | head -1)
@@ -257,6 +260,10 @@ for objective in "${objectives[@]}"; do
       if [ -n "$session" ] && overlap_ready "$session"; then
         ready=1
         break
+      fi
+      if [ "$warned" != 1 ]; then
+        echo "terminal $handle: waiting up to 10 minutes for an overlap verdict; answer a question in that terminal or close it" >&2
+        warned=1
       fi
       sleep 10
     done
