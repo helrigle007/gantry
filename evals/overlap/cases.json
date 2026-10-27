@@ -353,6 +353,26 @@
           "label": "related"
         }
       ]
+    },
+    {
+      "id": "related-owner-prefixed-branch",
+      "task": "Add a word-count helper and its test.",
+      "intent": "Add src/wordcount_7.py plus a test",
+      "files": ["src/wordcount_7.py", "tests/test_wordcount_7.py"],
+      "verdict": "ask",
+      "note": "Branch example-user/wordcount-7 shares the planned files and does not contain the intent, so classify says related. gantry overlap drops that branch only when it is the current task's own branch, before classification.",
+      "candidates": [
+        {
+          "kind": "branch",
+          "id": "example-user/wordcount-7",
+          "title": "example-user/wordcount-7",
+          "body": "",
+          "branch": "example-user/wordcount-7",
+          "url": "",
+          "files": ["src/wordcount_7.py", "tests/test_wordcount_7.py"],
+          "label": "related"
+        }
+      ]
     }
   ]
 }

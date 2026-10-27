@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Duplicate-work check. The script ranks, labels, and records the verdict."""
+"""Duplicate-work check. The script ranks, labels, and records the verdict.
+
+The current task's own branch, worker, and pull request are left out first.
+"""
 import importlib.util
 import json
 import os
@@ -344,8 +347,272 @@ def test_auto_record_and_answered_gate():
             os.environ.pop("ORCA_TERMINAL_HANDLE", None)
 
 
+WORD = "example-user/wordcount-7"
+OTHER = "example-user/other-count"
+INTENT_WORD = "Add src/wordcount_7.py plus a test"
+FILES_WORD = "src/wordcount_7.py,tests/test_wordcount_7.py"
+WORD_FILES = {
+    "src/wordcount_7.py": "def count(text):\n    return len(text.split())\n",
+    "tests/test_wordcount_7.py": "def test_count():\n    assert True\n",
+}
+OTHER_FILES = {"src/wordcount_7.py": "def count(text):\n    return 0\n"}
+
+
+def pr_row(number, title, branch, files, body=""):
+    return {
+        "number": number,
+        "title": title,
+        "body": body,
+        "headRefName": branch,
+        "url": f"https://github.com/example-org/example-repo/pull/{number}",
+        "files": [{"path": path} for path in files],
+    }
+
+
+def seed_repo(tmp, branches):
+    bare = os.path.join(tmp, "bare.git")
+    repo = os.path.join(tmp, "repo")
+    git(tmp, "init", "-q", "--bare", "-b", "main", bare)
+    git(tmp, "clone", "-q", bare, repo)
+    git(repo, "remote", "set-url", "origin", "https://github.com/example-org/example-repo.git")
+    git(repo, "config", f"url.{bare}/.insteadOf", "https://github.com/example-org/example-repo.git")
+    git(repo, "commit", "-q", "--allow-empty", "-m", "init")
+    git(repo, "push", "-q", "origin", "HEAD:main")
+    for name, files in branches:
+        git(repo, "checkout", "-q", "-B", name)
+        for path, content in files.items():
+            full = os.path.join(repo, path)
+            os.makedirs(os.path.dirname(full), exist_ok=True)
+            with open(full, "w") as handle:
+                handle.write(content)
+            git(repo, "add", "--", path)
+        git(repo, "commit", "-q", "-m", "add " + name.split("/")[-1])
+        git(repo, "push", "-q", "origin", f"HEAD:refs/heads/{name}")
+        git(repo, "checkout", "-q", "main")
+    git(repo, "fetch", "-q", "origin")
+    git(repo, "remote", "set-head", "origin", "main")
+    return repo
+
+
+def write_json(path, data):
+    with open(path, "w") as handle:
+        json.dump(data, handle)
+
+
+def overlap_env(tmp, repo, prs, fixture):
+    home = os.path.join(tmp, "home")
+    bindir = os.path.join(tmp, "bin")
+    os.makedirs(home, exist_ok=True)
+    prs_path = os.path.join(tmp, "prs.json")
+    fixture_path = os.path.join(tmp, "fixture.json")
+    write_json(prs_path, prs)
+    write_json(fixture_path, fixture)
+    write_exec(os.path.join(bindir, "gh"), FAKE_GH)
+    write_exec(os.path.join(bindir, "orca"), FAKE_ORCA)
+    env = os.environ.copy()
+    env.update({
+        "HOME": home,
+        "TMPDIR": tmp,
+        "PATH": bindir + os.pathsep + env["PATH"],
+        "GH_PRS": prs_path,
+        "GANTRY_ORCA_FIXTURE": fixture_path,
+    })
+    return env, prs_path, fixture_path
+
+
+def run_overlap(repo, env, *args):
+    proc = subprocess.run(
+        [os.path.join(ROOT, "bin", "gantry"), "overlap", *args],
+        cwd=repo, env=env, capture_output=True, text=True,
+    )
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    return json.loads(proc.stdout)
+
+
+def ids_of(data, kind):
+    return [item["id"] for item in data["candidates"] if item["kind"] == kind]
+
+
+def test_current_task_is_excluded():
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = os.path.realpath(tmp)
+        repo = seed_repo(tmp, [(WORD, WORD_FILES)])
+        wt = os.path.join(tmp, "wt")
+        git(repo, "worktree", "add", "-q", wt, WORD)
+        worker = {
+            "dispatchId": "ctx_word",
+            "taskId": "task_word",
+            "runId": "run_word",
+            "dispatchStatus": "running",
+            "workerState": "running",
+            "terminalState": "active",
+            "agentTerminalHandle": "term_word",
+            "worktreePath": wt,
+            "task_title": INTENT_WORD,
+            "files": ["src/wordcount_7.py", "tests/test_wordcount_7.py"],
+        }
+        task = {"id": "task_word", "task_title": "wordcount", "status": "dispatched", "result": ""}
+        fixture = {
+            "task-list": {"tasks": [task], "page": {}},
+            "worker-list": {"workers": [worker], "page": {}},
+        }
+        env, prs_path, fixture_path = overlap_env(tmp, repo, [], fixture)
+        base = ["--intent", INTENT_WORD, "--files", FILES_WORD, "--run", "run_word", "--task", "task_word"]
+
+        own_only = run_overlap(repo, env, "--checkpoint", "pre-pr", *base)
+        assert own_only["verdict"] == "continue", own_only
+        assert WORD not in ids_of(own_only, "branch")
+        assert "task_word" not in ids_of(own_only, "worker")
+        assert all(item.get("branch") != WORD for item in own_only["candidates"])
+        prev_tmp = os.environ.get("TMPDIR")
+        os.environ["TMPDIR"] = tmp
+        try:
+            assert gantry_kit.cleared("run_word", "task_word", "pre-pr") is True
+        finally:
+            if prev_tmp is None:
+                os.environ.pop("TMPDIR", None)
+            else:
+                os.environ["TMPDIR"] = prev_tmp
+
+        bare = run_overlap(repo, env, "--checkpoint", "pre-pr", "--intent", INTENT_WORD, "--files", FILES_WORD)
+        branch = next(item for item in bare["candidates"] if item["kind"] == "branch" and item["id"] == WORD)
+        assert branch["label"] == "related", branch
+        assert branch["label"] == gantry_kit.classify(INTENT_WORD, WORD_FILES.keys(), branch)
+        assert any(item["kind"] == "worker" and item["id"] == "task_word" and item["label"] == "duplicate" for item in bare["candidates"])
+        assert bare["verdict"] == "stop"
+
+        write_exec(os.path.join(tmp, "bin", "orca"), "#!/bin/sh\nexit 1\n")
+        unknown = run_overlap(repo, env, "--checkpoint", "pre-pr", *base)
+        assert any(item["kind"] == "branch" and item["id"] == WORD and item["label"] == "related" for item in unknown["candidates"])
+        assert unknown["verdict"] == "stop"
+        write_exec(os.path.join(tmp, "bin", "orca"), FAKE_ORCA)
+
+        write_json(prs_path, [
+            pr_row(7, "Add a word count helper", WORD, list(WORD_FILES), "Helper and test."),
+            pr_row(3, "Update readme", "docs-readme", ["README.md"], "Docs only."),
+        ])
+        own_pr = run_overlap(repo, env, "--checkpoint", "pre-pr", *base)
+        assert own_pr["verdict"] == "continue", own_pr
+        assert "7" not in ids_of(own_pr, "pr")
+        assert WORD not in ids_of(own_pr, "branch")
+        assert ids_of(own_pr, "pr") == ["3"]
+        assert any(item["id"] == "3" and item["label"] == "unrelated" for item in own_pr["candidates"])
+
+        write_json(prs_path, [
+            pr_row(8, INTENT_WORD, OTHER, ["src/wordcount_7.py"], "Same words, different task."),
+        ])
+        titled = run_overlap(repo, env, "--checkpoint", "pre-pr", *base)
+        titled_pr = next(item for item in titled["candidates"] if item["kind"] == "pr" and item["id"] == "8")
+        assert titled_pr["label"] == "duplicate"
+        assert titled_pr["label"] == gantry_kit.classify(INTENT_WORD, list(WORD_FILES), titled_pr)
+        assert WORD not in ids_of(titled, "branch")
+        assert "task_word" not in ids_of(titled, "worker")
+        assert titled["verdict"] == "stop"
+
+        write_json(prs_path, [])
+        task["result"] = "Pushed the helper. task=task_word dispatch=ctx_word pr=none branch=" + WORD
+        worker.pop("worktreePath")
+        fixture["worker-list"]["workers"] = []
+        write_json(fixture_path, fixture)
+        recorded = run_overlap(repo, env, "--checkpoint", "pre-pr", *base)
+        assert recorded["verdict"] == "continue", recorded
+        assert WORD not in ids_of(recorded, "branch")
+
+        fixture["worker-list"]["workers"] = [{
+            "dispatchId": "ctx_word",
+            "taskId": "task_word",
+            "dispatchStatus": "running",
+            "dispatch": {"id": "ctx_word", "branch": WORD},
+            "task_title": "unrelated title",
+            "files": ["src/wordcount_7.py", "tests/test_wordcount_7.py"],
+        }]
+        task["result"] = ""
+        write_json(fixture_path, fixture)
+        named = run_overlap(repo, env, "--checkpoint", "pre-pr", *base)
+        assert named["verdict"] == "continue", named
+        assert WORD not in ids_of(named, "branch")
+        assert "task_word" not in ids_of(named, "worker")
+
+        fixture["worker-list"]["workers"] = [{
+            "dispatchId": "ctx_word",
+            "taskId": "task_word",
+            "dispatchStatus": "running",
+            "resource": {"worktreeId": "repo-1::" + wt},
+            "task_title": INTENT_WORD,
+            "files": ["src/wordcount_7.py", "tests/test_wordcount_7.py"],
+        }]
+        write_json(fixture_path, fixture)
+        via_id = run_overlap(repo, env, "--checkpoint", "pre-pr", *base)
+        assert via_id["verdict"] == "continue", via_id
+        assert WORD not in ids_of(via_id, "branch")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = os.path.realpath(tmp)
+        repo = seed_repo(tmp, [(WORD, WORD_FILES), (OTHER, OTHER_FILES)])
+        wt = os.path.join(tmp, "wt")
+        other_wt = os.path.join(tmp, "wt-other")
+        git(repo, "worktree", "add", "-q", wt, WORD)
+        git(repo, "worktree", "add", "-q", other_wt, OTHER)
+        fixture = {
+            "task-list": {"tasks": [
+                {"id": "task_word", "task_title": "wordcount", "status": "dispatched", "result": ""},
+                {"id": "task_other", "task_title": INTENT_WORD, "status": "dispatched", "result": ""},
+            ], "page": {}},
+            "worker-list": {"workers": [
+                {
+                    "dispatchId": "ctx_word",
+                    "taskId": "task_word",
+                    "dispatchStatus": "running",
+                    "worktreePath": wt,
+                    "task_title": INTENT_WORD,
+                    "files": list(WORD_FILES),
+                },
+                {
+                    "dispatchId": "ctx_other",
+                    "taskId": "task_other",
+                    "dispatchStatus": "running",
+                    "worktreePath": other_wt,
+                    "task_title": INTENT_WORD,
+                    "files": ["src/wordcount_7.py"],
+                },
+            ], "page": {}},
+        }
+        env, _prs_path, _fixture_path = overlap_env(tmp, repo, [], fixture)
+        mixed = run_overlap(
+            repo, env, "--checkpoint", "pre-pr", "--intent", INTENT_WORD, "--files", FILES_WORD,
+            "--run", "run_word", "--task", "task_word",
+        )
+        assert WORD not in ids_of(mixed, "branch")
+        assert "task_word" not in ids_of(mixed, "worker")
+        foreign = next(item for item in mixed["candidates"] if item["kind"] == "branch" and item["id"] == OTHER)
+        assert foreign["label"] == "related", foreign
+        assert foreign["label"] == gantry_kit.classify(INTENT_WORD, list(WORD_FILES), foreign)
+        other_worker = next(item for item in mixed["candidates"] if item["kind"] == "worker" and item["id"] == "task_other")
+        assert other_worker["label"] == "duplicate"
+        assert mixed["verdict"] == "stop"
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = os.path.realpath(tmp)
+        repo = seed_repo(tmp, [(OTHER, OTHER_FILES)])
+        fixture = {
+            "task-list": {"tasks": [
+                {"id": "task_word", "task_title": "wordcount", "status": "ready", "result": ""},
+            ], "page": {}},
+            "worker-list": {"workers": [], "page": {}},
+        }
+        env, _prs_path, _fixture_path = overlap_env(tmp, repo, [], fixture)
+        scoped = run_overlap(
+            repo, env, "--checkpoint", "scoped", "--intent", INTENT_WORD, "--files", FILES_WORD,
+            "--run", "run_word", "--task", "task_word",
+        )
+        foreign = next(item for item in scoped["candidates"] if item["kind"] == "branch" and item["id"] == OTHER)
+        assert foreign["label"] == "related", foreign
+        assert scoped["verdict"] == "stop"
+
+
 if __name__ == "__main__":
     test_rank_classify_and_log()
     test_gate_and_mutation()
     test_auto_record_and_answered_gate()
-    print("3/3 passed")
+    test_current_task_is_excluded()
+    print("4/4 passed")

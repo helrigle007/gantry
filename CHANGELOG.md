@@ -6,6 +6,11 @@
 - The ship measurement loop counts a session by the timestamp of its first record, and only when that session is this checkout. It waits until those sessions go quiet before the next iteration. `scripts/ship_efficiency.py` names the coordinator session on each span and does not count Claude Code `agent-*.jsonl` subagents as workers.
 - `gantry --version` prints `0.2.3`.
 
+## 0.2.2
+
+- `gantry overlap` leaves out the current task's own pushed branch, active worker, and open pull request before it classifies. It matches the task id, the branch recorded for that task, and the branch checked out in the task's worktree. Another task's branch that shares files is still a stop. A check that cannot identify the task is unchanged.
+- `gantry --version` prints `0.2.2`.
+
 ## 0.2.1
 
 - `gantry overlap` labels every candidate and prints a top-level `verdict` of `continue` or `stop`. It records that classification, so a `continue` clears the pre-pr check without a second command. On `stop` the coordinator asks, then records `--answer proceed` or `--answer hold`.

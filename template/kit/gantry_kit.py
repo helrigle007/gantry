@@ -1129,6 +1129,23 @@ def assigned_issues(slug):
     return found, False
 
 
+def load_orca(args):
+    try:
+        proc = subprocess.run(["orca", *args, "--json"], capture_output=True, text=True, timeout=25)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0 or not proc.stdout.strip():
+        return None
+    try:
+        payload = json.loads(proc.stdout)
+    except ValueError:
+        return None
+    if not isinstance(payload, dict) or payload.get("ok") is False:
+        return None
+    result = payload.get("result") if "result" in payload else payload
+    return result if isinstance(result, dict) else None
+
+
 def active_workers():
     proc = subprocess.run(["orca", "orchestration", "worker-list", "--json"], capture_output=True, text=True)
     if proc.returncode != 0:
@@ -1157,7 +1174,237 @@ def active_workers():
     return found, False
 
 
-def gather(repo, planned, intent):
+def plain_branch(name):
+    name = (name or "").strip()
+    if name.startswith("refs/heads/"):
+        name = name[len("refs/heads/"):]
+    elif name.startswith("refs/remotes/origin/"):
+        name = name[len("refs/remotes/origin/"):]
+    if name.startswith("origin/"):
+        name = name[len("origin/"):]
+    return name
+
+
+def recorded_branch(result):
+    for _ in range(3):
+        if isinstance(result, dict):
+            direct = result.get("branch")
+            if isinstance(direct, str) and direct.strip() and direct.strip() != "none":
+                return plain_branch(direct)
+            result = result.get("body") if isinstance(result.get("body"), str) else ""
+            continue
+        if not isinstance(result, str) or not result:
+            return ""
+        try:
+            data = json.loads(result)
+        except ValueError:
+            data = None
+        if isinstance(data, dict):
+            result = data
+            continue
+        for token in result.replace(",", " ").split():
+            if token.startswith("branch=") and token != "branch=none":
+                return plain_branch(token[len("branch="):])
+        return ""
+    return ""
+
+
+def as_dict(value):
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str) and value[:1] == "{":
+        try:
+            parsed = json.loads(value)
+        except ValueError:
+            return None
+        return parsed if isinstance(parsed, dict) else None
+    return None
+
+
+def task_id_of(row):
+    if not isinstance(row, dict):
+        return ""
+    for key in ("taskId", "task_id", "id"):
+        value = row.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return ""
+
+
+def dispatch_id_of(row):
+    if not isinstance(row, dict):
+        return ""
+    for key in ("dispatchId", "dispatch_id"):
+        value = row.get(key)
+        if isinstance(value, str) and value:
+            return value
+    nested = as_dict(row.get("dispatch"))
+    if nested:
+        value = nested.get("id")
+        if isinstance(value, str) and value:
+            return value
+    return ""
+
+
+def explicit_branch(row):
+    if not isinstance(row, dict):
+        return ""
+    for node in (row, as_dict(row.get("dispatch"))):
+        if not isinstance(node, dict):
+            continue
+        value = node.get("branch")
+        if isinstance(value, str) and value.strip() and value.strip() != "none":
+            return plain_branch(value)
+    return ""
+
+
+def worker_checkout(row):
+    if not isinstance(row, dict):
+        return ""
+    nodes = [row]
+    for key in ("resource", "terminal", "workspace", "dispatch"):
+        node = as_dict(row.get(key))
+        if node:
+            nodes.append(node)
+    projection = as_dict(row.get("projection"))
+    if projection:
+        workspace = as_dict(projection.get("workspace"))
+        if workspace:
+            nodes.append(workspace)
+    for node in nodes:
+        for key in ("worktreePath", "worktree", "cwd", "path"):
+            value = node.get(key)
+            if isinstance(value, str) and value.strip():
+                path = os.path.realpath(os.path.expanduser(value.strip()))
+                if os.path.isdir(path):
+                    return path
+        for key in ("worktreeId", "worktree_id"):
+            value = node.get(key)
+            if isinstance(value, str) and "::" in value:
+                suffix = value.split("::", 1)[1]
+                if suffix:
+                    path = os.path.realpath(os.path.expanduser(suffix))
+                    if os.path.isdir(path):
+                        return path
+    return ""
+
+
+def checkout_branch(path):
+    if not path:
+        return ""
+    try:
+        proc = subprocess.run(
+            ["git", "-C", path, "symbolic-ref", "--short", "-q", "HEAD"],
+            capture_output=True, text=True,
+        )
+    except OSError:
+        return ""
+    if proc.returncode != 0:
+        return ""
+    return plain_branch(proc.stdout.strip())
+
+
+def default_branch_name(repo):
+    try:
+        proc = subprocess.run(
+            ["git", "-C", repo, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+            capture_output=True, text=True,
+        )
+    except OSError:
+        return ""
+    if proc.returncode == 0 and proc.stdout.strip():
+        return plain_branch(proc.stdout.strip())
+    return ""
+
+
+def paged_orca(sub, key, run):
+    rows = []
+    cursor = None
+    seen = set()
+    for _ in range(10):
+        args = ["orchestration", sub]
+        if run:
+            args.extend(["--run", run])
+        if cursor:
+            if cursor in seen:
+                break
+            seen.add(cursor)
+            args.extend(["--cursor", cursor])
+        result = load_orca(args)
+        if result is None:
+            return rows, bool(rows)
+        chunk = result.get(key)
+        if not isinstance(chunk, list):
+            return rows, bool(rows)
+        rows.extend(item for item in chunk if isinstance(item, dict))
+        page = result.get("page")
+        cursor = page.get("nextCursor") if isinstance(page, dict) else None
+        if not cursor:
+            return rows, True
+    return rows, True
+
+
+def current_work(repo, run, task):
+    if not task:
+        return None
+    ids = set()
+    branches = set()
+    known = False
+    if run:
+        tasks, tasks_ok = paged_orca("task-list", "tasks", run)
+        if tasks_ok:
+            for row in tasks:
+                if task_id_of(row) != task:
+                    continue
+                known = True
+                name = recorded_branch(row.get("result"))
+                if name:
+                    branches.add(name)
+    workers, workers_ok = paged_orca("worker-list", "workers", run)
+    if not workers_ok and run:
+        workers, workers_ok = paged_orca("worker-list", "workers", "")
+    if workers_ok:
+        for row in workers:
+            if task_id_of(row) != task:
+                continue
+            known = True
+            dispatch = dispatch_id_of(row)
+            if dispatch:
+                ids.add(dispatch)
+            for name in (explicit_branch(row), recorded_branch(row.get("result")), checkout_branch(worker_checkout(row))):
+                if name:
+                    branches.add(name)
+    if not known:
+        return None
+    default = default_branch_name(repo)
+    if default:
+        branches.discard(default)
+    branches.discard("")
+    branches.discard("none")
+    ids.add(task)
+    return ids, branches
+
+
+def own_candidate(candidate, ids, branches):
+    if candidate.get("kind") == "worker" and str(candidate.get("id") or "") in ids:
+        return True
+    branch = plain_branch(candidate.get("branch") or "")
+    if not branch and candidate.get("kind") == "branch":
+        branch = plain_branch(str(candidate.get("id") or ""))
+    return bool(branch) and branch in branches
+
+
+def drop_current_task(repo, candidates, run, task):
+    # Identity is the task id, the branch recorded for that task, and the
+    # branch checked out in its worktree. Title text is not an identity.
+    identity = current_work(repo, run, task)
+    if identity is None:
+        return candidates
+    ids, branches = identity
+    return [item for item in candidates if not own_candidate(item, ids, branches)]
+
+
+def gather(repo, planned, intent, run="", task=""):
     url = origin_url(repo)
     parsed = parse_remote(url or "")
     if not parsed:
@@ -1175,6 +1422,7 @@ def gather(repo, planned, intent):
     workers, workers_unavailable = active_workers()
     candidates.extend(issues)
     candidates.extend(workers)
+    candidates = drop_current_task(repo, candidates, run, task)
     planned_files = normalize_files(planned)
     for candidate in candidates:
         candidate["score"] = shared_count(planned_files, candidate["files"])
@@ -1297,7 +1545,9 @@ def cmd_overlap(argv):
         return 0
     repo = opts.get("repo") or "."
     files = [item for item in (opts.get("files") or "").split(",") if item]
-    data = apply_classification(gather(repo, files, opts.get("intent") or ""))
+    data = apply_classification(gather(
+        repo, files, opts.get("intent") or "", opts.get("run") or "", opts.get("task") or "",
+    ))
     print(json.dumps(data, separators=(",", ":")))
     if opts.get("run"):
         checkpoint = opts.get("checkpoint") or "scoped"
