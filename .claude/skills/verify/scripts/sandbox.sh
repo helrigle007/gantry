@@ -157,7 +157,7 @@ doctor() {
   for f in gantry-guard.py gantry-coordinator.md gantry-mailbox gantry_run.py gantry.json pre-push gantry_kit.py; do
     check "kit $f matches template" "cmp -s '$kit/template/kit/$f' '$s/home/.gantry/current/kit/$f'"
   done
-  check "version is 0.2.0" "[ \"\$(HOME='$s/home' '$s/home/.gantry/current/bin/gantry' --version)\" = 0.2.0 ]"
+  check "version is 0.2.1" "[ \"\$(HOME='$s/home' '$s/home/.gantry/current/bin/gantry' --version)\" = 0.2.1 ]"
   check "user settings wire the guard" "grep -q gantry-guard.py '$s/home/.claude/settings.json'"
   check "user agent is the coordinator" "grep -q 'name: gantry-coordinator' '$s/home/.claude/agents/gantry-coordinator.md'"
   check "pre-push stub is gantry" "grep -q 'gantry pre-push' '$s/repo/.git/hooks/pre-push'"

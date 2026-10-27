@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Duplicate-work check. The script ranks. Classification follows the coordinator's rules."""
+"""Duplicate-work check. The script ranks, labels, and records the verdict."""
 import importlib.util
 import json
 import os
@@ -126,17 +126,24 @@ def test_rank_classify_and_log():
         prs_out = [item for item in data["candidates"] if item["kind"] == "pr"]
         assert [item["id"] for item in prs_out] == ["1", "2", "3"], prs_out
         assert [item["score"] for item in prs_out] == [2, 1, 0]
-        labels = [gantry_kit.classify(INTENT, PLANNED, item) for item in prs_out]
+        labels = [item["label"] for item in prs_out]
         actions = [gantry_kit.ACTIONS[label] for label in labels]
         assert labels == ["duplicate", "related", "unrelated"], labels
+        assert labels == [gantry_kit.classify(INTENT, PLANNED, item) for item in prs_out]
         assert actions == ["stop", "flag", "ignore"], actions
-        assert gantry_kit.verdict_of(labels) == "stop"
+        assert data["verdict"] == "stop"
+        assert data["verdict"] == gantry_kit.verdict_of([item["label"] for item in data["candidates"]])
         assert any(item["kind"] == "branch" and item["id"] == "extra-topic" for item in data["candidates"])
         assert "unpushed" in data["sees"]
         prev_tmp = os.environ.get("TMPDIR")
         os.environ["TMPDIR"] = tmp
         events = gantry_kit.read_overlap("run_1")
         assert events and events[0]["kind"] == "gathered" and events[0]["checkpoint"] == "pre-pr"
+        assert events[0]["candidates"][0]["label"] == "duplicate"
+        classified = events[-1]
+        assert classified["kind"] == "classified" and classified["verdict"] == "stop"
+        assert classified["checkpoint"] == "pre-pr" and classified["task"] == "task_impl"
+        assert gantry_kit.cleared("run_1", "task_impl", "pre-pr") is False
         recorded = subprocess.run(
             [os.path.join(ROOT, "bin", "gantry"), "overlap", "--record", "classified", "--checkpoint", "pre-pr",
              "--run", "run_1", "--task", "task_impl", "--verdict", "stop"],
@@ -236,7 +243,109 @@ def test_gate_and_mutation():
             os.environ.pop("ORCA_TERMINAL_HANDLE", None)
 
 
+def test_auto_record_and_answered_gate():
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = os.path.realpath(tmp)
+        bare = os.path.join(tmp, "bare.git")
+        repo = os.path.join(tmp, "repo")
+        home = os.path.join(tmp, "home")
+        bindir = os.path.join(tmp, "bin")
+        os.makedirs(home)
+        git(tmp, "init", "-q", "--bare", "-b", "main", bare)
+        git(tmp, "clone", "-q", bare, repo)
+        git(repo, "remote", "set-url", "origin", "https://github.com/example-org/example-repo.git")
+        git(repo, "config", f"url.{bare}/.insteadOf", "https://github.com/example-org/example-repo.git")
+        git(repo, "commit", "-q", "--allow-empty", "-m", "init")
+        git(repo, "push", "-q", "origin", "HEAD:main")
+        for branch in ("fix-crash", "banner", "docs-readme", "extra-topic"):
+            git(repo, "push", "-q", "origin", f"HEAD:refs/heads/{branch}")
+        prs = os.path.join(tmp, "prs.json")
+        with open(prs, "w") as handle:
+            json.dump(PRS, handle)
+        write_exec(os.path.join(bindir, "gh"), FAKE_GH)
+        write_exec(os.path.join(bindir, "orca"), "#!/bin/sh\nexit 1\n")
+        env = os.environ.copy()
+        env.update({"HOME": home, "TMPDIR": tmp, "PATH": bindir + os.pathsep + env["PATH"], "GH_PRS": prs})
+        saved_home = os.environ.get("HOME")
+        saved_tmp = os.environ.get("TMPDIR")
+        os.environ["HOME"] = home
+        os.environ["TMPDIR"] = tmp
+        os.environ.pop("CLAUDE_PROJECT_DIR", None)
+        try:
+            gantry_kit.register(gantry_kit.normalize_origin("https://github.com/example-org/example-repo.git"), repo)
+            guard = load_guard()
+
+            def fake_orca(*args):
+                if args[0] == "worker-list":
+                    return {"workers": [{"agentTerminalHandle": "term_worker", "taskId": "task_impl", "runId": "run_1", "terminalState": "active", "dispatchStatus": "running"}], "page": {}}
+                if args[0] == "task-list":
+                    return {"tasks": [{"id": "task_impl", "task_title": "impl"}]}
+                return {"run": {"id": "run_1"}}
+
+            guard.orca = fake_orca
+            os.environ["ORCA_TERMINAL_HANDLE"] = "term_worker"
+
+            def overlap(*args):
+                proc = subprocess.run(
+                    [os.path.join(ROOT, "bin", "gantry"), "overlap", *args],
+                    cwd=repo, env=env, capture_output=True, text=True,
+                )
+                assert proc.returncode == 0, proc.stderr
+                return json.loads(proc.stdout)
+
+            continued = overlap(
+                "--checkpoint", "pre-pr", "--intent", "Add a word-count helper",
+                "--files", "src/wordcount.py,tests/test_wordcount.py", "--run", "run_1", "--task", "task_impl",
+            )
+            assert continued["verdict"] == "continue", continued["verdict"]
+            assert continued["candidates"]
+            assert {item["label"] for item in continued["candidates"]} == {"unrelated"}
+            assert all(item["label"] == gantry_kit.classify(continued["intent"], continued["files"], item) for item in continued["candidates"])
+            assert gantry_kit.cleared("run_1", "task_impl", "pre-pr") is True
+            allowed, reason = decide(guard, repo, "gh pr create --title x --body y")
+            assert allowed is True, reason
+
+            stopped = overlap(
+                "--checkpoint", "pre-pr", "--intent", INTENT,
+                "--files", "src/app.py,tests/test_app.py", "--run", "run_1", "--task", "task_impl",
+            )
+            assert [item["label"] for item in stopped["candidates"] if item["kind"] == "pr"] == ["duplicate", "related", "unrelated"]
+            assert stopped["verdict"] == "stop"
+            assert gantry_kit.cleared("run_1", "task_impl", "pre-pr") is False
+            allowed, reason = decide(guard, repo, "gh pr create --title x --body y")
+            assert allowed is False and "pre-pr" in reason, (allowed, reason)
+            held = subprocess.run(
+                [os.path.join(ROOT, "bin", "gantry"), "overlap", "--record", "answered", "--checkpoint", "pre-pr",
+                 "--run", "run_1", "--task", "task_impl", "--answer", "hold"],
+                cwd=repo, env=env, capture_output=True, text=True,
+            )
+            assert held.returncode == 0, held.stderr
+            assert gantry_kit.cleared("run_1", "task_impl", "pre-pr") is False
+            allowed, reason = decide(guard, repo, "gh pr create --title x --body y")
+            assert allowed is False and "pre-pr" in reason, (allowed, reason)
+            proceeded = subprocess.run(
+                [os.path.join(ROOT, "bin", "gantry"), "overlap", "--record", "answered", "--checkpoint", "pre-pr",
+                 "--run", "run_1", "--task", "task_impl", "--answer", "proceed"],
+                cwd=repo, env=env, capture_output=True, text=True,
+            )
+            assert proceeded.returncode == 0, proceeded.stderr
+            assert gantry_kit.cleared("run_1", "task_impl", "pre-pr") is True
+            allowed, reason = decide(guard, repo, "gh pr create --title x --body y")
+            assert allowed is True, reason
+        finally:
+            if saved_home is None:
+                os.environ.pop("HOME", None)
+            else:
+                os.environ["HOME"] = saved_home
+            if saved_tmp is None:
+                os.environ.pop("TMPDIR", None)
+            else:
+                os.environ["TMPDIR"] = saved_tmp
+            os.environ.pop("ORCA_TERMINAL_HANDLE", None)
+
+
 if __name__ == "__main__":
     test_rank_classify_and_log()
     test_gate_and_mutation()
-    print("2/2 passed")
+    test_auto_record_and_answered_gate()
+    print("3/3 passed")

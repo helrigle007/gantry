@@ -63,15 +63,15 @@ gantry --version
 
 Every coding task is checked twice. Once after the bug is reproduced or the feature is scoped, when the files and a one-line intent are known, before any worker starts. Again right before the ship worker opens the pull request.
 
-`gantry overlap` gathers the candidates and prints compact JSON. It reads open pull requests in the target repo (`gh pr list --json`, with changed files, branch, and body), remote branches with no pull request (`git ls-remote`), assigned open issues, and the run's own active workers. It ranks them by how many planned files they share.
+`gantry overlap` gathers the candidates, labels each one, and prints compact JSON with a top-level `verdict` of `continue` or `stop`. It reads open pull requests in the target repo (`gh pr list --json`, with changed files, branch, and body), remote branches with no pull request (`git ls-remote`), assigned open issues, and the run's own active workers. It ranks them by how many planned files they share. Shared files and a matching intent are `duplicate`. Shared files otherwise are `related`. No shared files are `unrelated`. Any duplicate or related candidate is `stop`. Otherwise the verdict is `continue`. The command records that classification.
 
-The coordinator reads the top few and classifies each as duplicate, related, or unrelated, with a one-line reason. A duplicate or a related match stops the run. The coordinator asks with AskUserQuestion and includes the links. It does not continue on its own. Each check is logged on the run and folded into `state.json`.
+On `continue` the coordinator proceeds. On `stop` it asks with AskUserQuestion, lists each duplicate or related candidate with its link and label, and records `--answer proceed` or `--answer hold`. It does not decide overlap by reading pull requests itself. Each check is folded into `state.json`.
 
 The check sees work pushed to GitHub. Unpushed local branches are invisible.
 
-The guard lets the coordinator run `gantry overlap`. A worker `gh pr create` stays denied until the pre-pr check is cleared.
+The guard lets the coordinator run `gantry overlap`. A worker `gh pr create` stays denied until the pre-pr verdict is `continue`, or the user answers `proceed`.
 
-`evals/overlap/` measures this check and does not change it. `python3 evals/overlap/score.py` scores `classify` and `verdict_of` on the golden cases. `python3 scripts/overlap_efficiency.py --before <sessions> --after <sessions>` compares coordinator transcripts. The v0.2.0 score, and the commands that record a live baseline, are in [evals/overlap/README.md](evals/overlap/README.md).
+`evals/overlap/` measures this check. `classify` and `verdict_of` are unchanged. `python3 evals/overlap/score.py` scores them on the golden cases. `python3 scripts/overlap_efficiency.py --before <sessions> --after <sessions>` compares coordinator transcripts. The score, and the commands that record a live baseline, are in [evals/overlap/README.md](evals/overlap/README.md).
 
 ## Start a coordinator
 
@@ -185,7 +185,7 @@ Add:
 
 ## Layout
 
-- `bin/gantry` is the launcher. `gantry --version` prints `0.2.0`.
+- `bin/gantry` is the launcher. `gantry --version` prints `0.2.1`.
 - `template/kit/` is the source the launcher installs under `~/.gantry`.
 - `scripts/race-check.py <repo> [n] [timeout]` starts N new-child workers in parallel and times each first heartbeat. `scripts/ping-runs.py <repo> <n>` times coordinator responsiveness. `scripts/overlap_efficiency.py` compares overlap checks in coordinator transcripts.
 - `evals/overlap/` is the duplicate-work measurement harness: golden cases, the correctness runner, and the transcript fixtures.

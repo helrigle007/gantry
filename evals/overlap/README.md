@@ -1,6 +1,6 @@
 # Overlap measurement
 
-This directory measures the duplicate-work check. It does not change the check. `classify` and `verdict_of` in `template/kit/gantry_kit.py` stay as they are. A later change can make `gantry overlap` apply those rules itself and record `continue` when every candidate is unrelated. Run the same commands before and after that change.
+This directory measures the duplicate-work check. It does not change `classify` or `verdict_of`. Those functions in `template/kit/gantry_kit.py` stay as they are. As of 0.2.1, `gantry overlap` applies them itself: every candidate gets a `label`, the JSON has a top-level `verdict`, and that classification is recorded. Run the same commands on a v0.2.0 transcript and on a 0.2.1 transcript to compare them.
 
 The rule the cases lock: shared files, and the intent contained in the title or body or the title contained in the intent, is `duplicate`. Shared files otherwise is `related`. No shared files is `unrelated`. Comparison is a case-insensitive substring, after trimming, and a leading `./` on a path is ignored. The verdict is `continue` when every candidate is unrelated. Any duplicate or related candidate is `ask` (`verdict_of` returns `stop` for that).
 
@@ -16,7 +16,7 @@ python3 evals/overlap/score.py --classify module:function --verdict module:funct
 
 `classify(intent, planned_files, candidate)` returns `duplicate`, `related`, or `unrelated`. `verdict(labels)` returns `continue`, `stop`, or `ask`. `stop` is reported as `ask`.
 
-On the current `classify` and `verdict_of` (v0.2.0, unchanged by this harness):
+On the current `classify` and `verdict_of` (unchanged since v0.2.0):
 
 ```
 16/16 passed  exact-match 1.000
@@ -62,7 +62,7 @@ python3 scripts/overlap_efficiency.py --before <before>... --after <after>...
 
 ### Synthetic fixtures
 
-`evals/overlap/fixtures/before/synthetic-before.jsonl` and `evals/overlap/fixtures/after/synthetic-after.jsonl` exercise the script. They are not a measured baseline. The before file is a coordinator that classifies by hand, including one `worker-show` so replay scaling changes that check (1500 measured tokens, 1215 reported). The after file is one turn whose overlap result already contains `"verdict": "continue"`. The current kit does not print that field.
+`evals/overlap/fixtures/before/synthetic-before.jsonl` and `evals/overlap/fixtures/after/synthetic-after.jsonl` exercise the script. They are not a measured baseline. The before file is a coordinator that classifies by hand, including one `worker-show` so replay scaling changes that check (1500 measured tokens, 1215 reported). The after file is one turn whose overlap result already contains `"verdict": "continue"`. v0.2.0 did not print that field. 0.2.1 does, and a check that closes on that top-level verdict is counted.
 
 ```sh
 python3 scripts/overlap_efficiency.py \
@@ -85,6 +85,8 @@ unclosed                         1           0
 ## Live baseline
 
 This tree has no live transcript baseline. The harness was added in an environment where `claude` and `orca` were not on `PATH`, so no coordinator sessions were run and no session numbers were invented.
+
+A live v0.2.0 baseline, not stored in this tree, showed the coordinator sometimes skipped `gantry overlap` and asked by hand, and sometimes ran the command more than once before deciding.
 
 Record the v0.2.0 baseline on a Mac that already runs Gantry (Orca, Claude Code, `gh` logged in, `gantry` on `PATH`). Use a repository you control, not the Gantry source checkout. The commands below call that repository `example-org/example-repo`. Substitute your own owner, repository, and checkout. `gantry install` commits nothing in that checkout. The seed commands below are your own commits.
 
@@ -170,7 +172,9 @@ The version line is `0.2.0`. `update` prints `gantry: no PR opened`. Install sti
 
 ### Record ten sessions
 
-Five objectives, twice each, each in its own Orca terminal. Stop at the scoped overlap record. The metric ends at that record, so later lines in the file stay out of the numbers.
+Five objectives, twice each, each in its own Orca terminal. Stop when the scoped check has closed. The metric ends there, so later lines in the file stay out of the numbers.
+
+The session file contains the coordinator prompt. A search for the words `gantry overlap --record` matches that prompt, and every session was copied after about 13 seconds, before a command ran. `overlap_ready` matches an executed tool call instead: a `"command"` field containing `gantry overlap --record`. Quoted text is ignored, so a worker spec that mentions the command does not count. On the labeling kit it also accepts the first overlap result whose JSON has a top-level `verdict` of `continue` or `stop`.
 
 ```sh
 # bash 3.2 is enough. pipefail is off so a closed pipe from head does not abort the loop.
@@ -180,9 +184,55 @@ objectives=(
   "Fix the crash in app. The files are src/app.py and tests/test_app.py."
   "Add retry-client. The file is src/client.py."
   "Rename the banner. The file is src/app.py."
-  "Document the retry helper. The file is docs/retry.md."
+  "Add a word-count helper. The files are src/wordcount.py and tests/test_wordcount.py."
   "Add a slug helper. The files are src/slug.py and tests/test_slug.py."
 )
+overlap_ready() {
+  python3 - "$1" <<'PY'
+import json, re, sys
+QUOTED = re.compile(r"'[^']*'|\"[^\"]*\"")
+path = sys.argv[1]
+for raw in open(path):
+    raw = raw.strip()
+    if not raw:
+        continue
+    try:
+        record = json.loads(raw)
+    except ValueError:
+        continue
+    content = (record.get("message") or {}).get("content")
+    if not isinstance(content, list):
+        continue
+    for part in content:
+        if not isinstance(part, dict):
+            continue
+        if part.get("type") == "tool_use" and part.get("name") == "Bash":
+            blob = part.get("input")
+            command = blob if isinstance(blob, str) else (blob or {}).get("command") if isinstance(blob, dict) else None
+            if isinstance(command, str) and "gantry overlap --record" in QUOTED.sub(" ", command):
+                sys.exit(0)
+        if part.get("type") != "tool_result":
+            continue
+        text = part.get("content")
+        if isinstance(text, list):
+            bits = []
+            for item in text:
+                if isinstance(item, dict):
+                    bits.append(str(item.get("text") or ""))
+                elif isinstance(item, str):
+                    bits.append(item)
+            text = "\n".join(bits)
+        if not isinstance(text, str):
+            continue
+        try:
+            data = json.loads(text)
+        except ValueError:
+            continue
+        if isinstance(data, dict) and "candidates" in data and data.get("verdict") in ("continue", "stop"):
+            sys.exit(0)
+sys.exit(1)
+PY
+}
 key=$(printf '%s' "$(cd "$CHECKOUT" && pwd -P)" | sed 's/[^A-Za-z0-9]/-/g')
 proj="$HOME/.claude/projects/$key"
 for objective in "${objectives[@]}"; do
@@ -204,14 +254,14 @@ for objective in "${objectives[@]}"; do
       if [ -z "$session" ]; then
         session=$(find "$HOME/.claude/projects" -name '*.jsonl' -newer "$mark" -exec ls -t {} + 2>/dev/null | head -1)
       fi
-      if [ -n "$session" ] && grep -q "gantry overlap --record" "$session"; then
+      if [ -n "$session" ] && overlap_ready "$session"; then
         ready=1
         break
       fi
       sleep 10
     done
     if [ "$ready" != 1 ]; then
-      echo "no overlap record yet for $handle (session ${session:-none})" >&2
+      echo "no overlap verdict yet for $handle (session ${session:-none})" >&2
       echo "If a question is waiting: orca terminal send --terminal $handle --text 'hold' --enter --json" >&2
       exit 1
     fi
@@ -224,7 +274,7 @@ python3 "$GANTRY_SRC/scripts/overlap_efficiency.py" --before "$BASE/before"
 
 Claude Code names the project directory by taking the checkout's absolute path and replacing every character that is not a letter or digit with `-`. If that directory is missing, the loop uses the newest session jsonl under `~/.claude/projects` written after the terminal was created.
 
-The first three objectives are duplicates or related work, so the coordinator should ask. The docs and slug objectives share no seeded files, so the rule says continue. If a question is waiting and the loop has not seen `--record` yet, send `hold` from another shell:
+The first three objectives are duplicates or related work, so the coordinator should ask. The word-count and slug objectives share no seeded files, so the rule says continue. If a question is waiting and the loop has not seen an executed overlap verdict yet, send `hold` from another shell:
 
 ```sh
 orca terminal send --terminal <handle> --text 'hold' --enter --json
@@ -234,16 +284,16 @@ If you abandon a run that already started workers, follow the teardown in `.clau
 
 ### Rerun after the labeling change
 
-Check out the commit that makes `gantry overlap` label candidates and record `continue` when every candidate is unrelated. Install that kit, leave the seeded repository as it is, and repeat the ten sessions into a second directory.
+Check out the 0.2.1 commit, which makes `gantry overlap` label candidates and record the verdict. Install that kit, leave the seeded repository as it is, and repeat the ten sessions into a second directory.
 
 ```sh
 cd "$GANTRY_SRC"
-git checkout <that-commit>
+git checkout <0.2.1-commit>
 ./bin/gantry update "$CHECKOUT"
 mkdir -p "$BASE/after"
 ```
 
-Run the session loop again with `cp` pointed at `$BASE/after` instead of `$BASE/before`. On that kit the verdict may be inside the first overlap result (`"verdict": "continue"`) with no `--record` line. Wait until the session contains either `gantry overlap --record` or `"verdict":"continue"` or `"verdict":"stop"`, then copy it. Then compare:
+Run the same session loop with `cp` pointed at `$BASE/after` instead of `$BASE/before`. `overlap_ready` already accepts the first overlap result with a top-level `verdict`, including a `continue` that has no `--record` line. Then compare:
 
 ```sh
 python3 "$GANTRY_SRC/scripts/overlap_efficiency.py" \
