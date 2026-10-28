@@ -45,9 +45,9 @@ Transcripts live under the coordinator project dir and each worker worktree's pr
 
 To talk to the coordinator like the operator does: `orca terminal send --terminal $H --text "<message>" --enter --json`.
 
-Ask it to clean up with `orca terminal send --terminal $H --text 'clean up' --enter --json`. The first reply is a dry-run list. A second message, `just clean up`, confirms every finished item. Confirm a subset by naming the handles and paths. Proof is that list, then `worker-list` showing the closed terminals gone or still skipped, and the main checkout still present. Tier 1 allow and deny payloads are in [guard.md](guard.md).
+Ask it to clean up with `orca terminal send --terminal $H --text 'clean up' --enter --json`. The first reply is the `gantry cleanup --scan` list. A second message, `just clean up`, is `gantry cleanup --finished`. Confirm a subset by naming the task. Proof is that list, then the worktree gone or still skipped, and the main checkout still present. The coordinator does not dispatch `gantry-cleanup`. Tier 1 allow and deny payloads are in [guard.md](guard.md).
 
-Proof: the Run's tasks reach `completed`, each PR has a `## Verification` section and a verifier verdict comment, merges used `--match-head-commit` (grep the ship worker's digest), and `git -C $F log origin/main` shows the landed commits in dependency order. The ship task's `task_title` in `task-list` is `gantry-ship`. An implementation worker told to merge its own PR gets "only the gantry-ship worker merges".
+Proof: the Run's tasks reach `completed`, each PR has a `## Verification` section and a verifier verdict comment, and `git -C $F log origin/main` shows the landed commits in dependency order. An independent pull request is merged by `gantry ship` in the coordinator session (`gh pr merge --squash --match-head-commit` inside that command). A stack still has a ship task whose `task_title` is `gantry-ship`. An implementation worker told to merge its own PR gets "only the gantry-ship worker merges". The coordinator told to run `gh pr merge` itself gets "coordinator never runs gh pr merge".
 
 Teardown removes only what this run created. Leave PRs, branches, and merge commits on GitHub. List them for the operator. Evidence in `$V/evidence` stays.
 

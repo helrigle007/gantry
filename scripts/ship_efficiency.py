@@ -4,9 +4,10 @@
 A span starts at PR-ready and ends at cleanup done. PR-ready is an executed
 command: an implementation worker's `worker_done` whose body carries a pull
 URL, or the coordinator's `worker-start --task-title gantry-ship`. Cleanup
-done is an executed `git worktree remove`, `orca worktree rm`, or a command
-that marks the task done (`task-update --status completed`, or a `worker_done`
-with `--outcome succeeded` and no pull URL).
+done is an executed `git worktree remove`, `orca worktree rm`, an executed
+`gantry cleanup` that is not `--scan` or `--dry-run`, or a command that marks
+the task done (`task-update --status completed`, or a `worker_done` with
+`--outcome succeeded` and no pull URL).
 
 Matching uses argv, after quotes are removed from the split. Text inside a
 spec, and the coordinator prompt, do not open or close a span. The prompt
@@ -257,8 +258,56 @@ def is_mailbox(argv):
     return any(basename(token) == "gantry-mailbox" for token in argv)
 
 
+def gantry_rest(argv):
+    """Arguments after a gantry or gantry_kit.py command, or None."""
+    if not argv:
+        return None
+    name = basename(argv[0])
+    if name in ("gantry", "gantry_kit.py"):
+        return argv[1:]
+    if name in ("python", "python3") and len(argv) >= 2 and basename(argv[1]) == "gantry_kit.py":
+        return argv[2:]
+    return None
+
+
+def gantry_verb(argv):
+    rest = gantry_rest(argv)
+    if rest is None:
+        return None
+    for token in rest:
+        if not token.startswith("-"):
+            return token
+    return None
+
+
+def cleanup_task(rest):
+    """First positional task id of a gantry cleanup argv, if it has one."""
+    seen = False
+    skip_next = False
+    for token in rest:
+        if skip_next:
+            skip_next = False
+            continue
+        if token == "cleanup":
+            seen = True
+            continue
+        if not seen:
+            continue
+        if token == "--run":
+            skip_next = True
+            continue
+        if token.startswith("--run="):
+            continue
+        if token.startswith("-"):
+            continue
+        return token
+    return None
+
+
 def is_coordinator_argv(argv):
     if is_mailbox(argv):
+        return True
+    if gantry_verb(argv) in ("ship", "cleanup"):
         return True
     return any(token in COORD_TOKENS for token in argv)
 
@@ -304,6 +353,8 @@ def events_of(command, role):
                 found.append({"kind": "cleanup_dispatch", "prs": prs, "task": task})
         if is_worktree_remove(argv):
             found.append({"kind": "remove", "prs": [], "task": None})
+        if gantry_verb(argv) == "cleanup" and "--scan" not in argv and "--dry-run" not in argv:
+            found.append({"kind": "remove", "prs": [], "task": cleanup_task(gantry_rest(argv))})
         if is_worker_done(argv):
             body = body_of(argv)
             prs = prs_of(body)

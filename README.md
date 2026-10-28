@@ -100,7 +100,7 @@ The coordinator answers a read-only request, such as a question about the repo, 
 
 Before the first worker, and again before the ship worker opens a pull request, the coordinator runs the duplicate-work check above.
 
-Workers open PRs through pstack's Opening a PR playbook, with runtime evidence under `## Verification`. A dependent task stacks on its parent's branch. When every PR is open, the coordinator dispatches one ship worker with task title `gantry-ship`, which runs Shipping. The guard lets only that worker run `gh pr merge`. Shipping verifies each PR independently and lands the verified run bottom-up with `gh pr merge --match-head-commit`.
+Workers open PRs through pstack's Opening a PR playbook, with runtime evidence under `## Verification`. A dependent task stacks on its parent's branch. When every independent PR is open, the coordinator reads `gantry-ship.md` and runs `gantry ship`. That command waits for green checks, squash-merges with `--match-head-commit`, and deletes only a branch this run recorded. It never force-pushes. A stacked PR, one whose base is not the default branch or that another open PR targets, stays with one `gantry-ship` worker so Shipping can restack with `--force-with-lease`. The guard still denies the coordinator `gh pr merge`, `git push`, and `git worktree remove`. The merge runs inside `gantry ship`.
 
 A worker's blocking question reaches the coordinator through `orca orchestration ask`. The coordinator answers questions that fall within the objective. Anything else becomes an Orca decision gate for you. Watch progress in Orca's Agent Dashboard. The coordinator reports in its terminal with PR links.
 
@@ -127,7 +127,7 @@ Rules live outside every repo. `~/.gantry/charters/global.json` holds the global
 { "autoMerge": true }
 ```
 
-`true`, the default, means the ship worker lands verified PRs. With `false`, the ship worker runs Babysit in `drive` mode to bring PRs to merge-ready, and the guard blocks every `gh pr merge`. The coordinator then opens a decision gate on a landing task. To land, set `autoMerge` to `true`, then tell the coordinator to resolve the gate with `land`. Orca resolves a gate only from the Run's own coordinator or the Agent Dashboard, not from another terminal. The guard reads this file from the git common directory, so an edit takes effect in every worktree at once.
+`true`, the default, means `gantry ship` lands a verified independent PR. With `false`, the guard blocks `gantry ship` and every `gh pr merge`. The coordinator dispatches the ship worker to babysit those PRs to merge-ready, then opens a decision gate on a landing task. To land, set `autoMerge` to `true`, then tell the coordinator to resolve the gate with `land`. Orca resolves a gate only from the Run's own coordinator or the Agent Dashboard, not from another terminal. The guard reads this file from the git common directory, so an edit takes effect in every worktree at once.
 
 The same file holds `contextReset`. The template defaults are compact mode at 300000 tokens:
 
@@ -150,15 +150,15 @@ These rules apply only when the current repo's origin is registered.
 | Rule | Who | How |
 | --- | --- | --- |
 | No file edits | coordinator | `tools:` allowlist, `disallowedTools`, and the guard's tool allowlist |
-| Bash limited to `orca` (never `orchestration check`), `gantry overlap`, `gantry charter`, `~/.gantry/current/kit/gantry-mailbox`, read-only `git`, `git fetch` from origin, a fast-forward of the default branch in a clean main checkout, and `gh pr view/checks/list` | coordinator | guard |
-| No merging, and no opening a pull request | coordinator always | guard |
+| Bash limited to `orca` (never `orchestration check`), `gantry overlap`, `gantry charter`, `gantry ship`, `gantry cleanup`, `~/.gantry/current/kit/gantry-mailbox`, read-only `git`, `git fetch` from origin, a fast-forward of the default branch in a clean main checkout, and `gh pr view/checks/list` | coordinator | guard |
+| No `gh pr merge`, no `git push`, no `git worktree remove`, and no opening a pull request. `gantry ship` is allowed only while `autoMerge` is true and the argv has no `--admin`, `--auto`, or `--force` | coordinator | guard |
 | No `gh pr create` until the pre-pr overlap check is cleared | workers | guard |
 | No merging | every worker except the `gantry-ship` task's, all workers when `autoMerge` is false | guard |
 | Merges only as `gh pr merge --match-head-commit`, never `--admin` or `--auto` | workers | guard |
 | No push to the default branch, no plain force push (`--force-with-lease` only) | coordinator and workers (guard), everyone (`pre-push`) | guard and `pre-push` |
 | git and gh only against the repo's own `origin`, and any `forbidden` entry is denied when a command mentions it | coordinator and workers | guard |
 | No deleting repos, settings, or branches, except merged task branches | coordinator and workers | guard |
-| Orca use limited to `orchestration send`, `ask`, and `check` | workers, except the `gantry-cleanup` task's, which may also close settled worker terminals from any run and remove clean worktrees whose branch merged or is gone from origin with no unpushed commits | guard |
+| Orca use limited to `orchestration send`, `ask`, and `check` | workers, except the `gantry-cleanup` task's, which may also close settled worker terminals from any run and remove clean worktrees whose branch merged or is gone from origin with no unpushed commits. The coordinator runs `gantry cleanup` and does not dispatch that worker | guard |
 | No pstack Orchestrate playbook | workers | guard |
 | No edits to the guard, mailbox, run hook, settings, agent, `gantry.json`, or anything under `~/.gantry`, the charter included | workers | guard |
 
@@ -188,11 +188,11 @@ Add:
 
 ## Layout
 
-- `bin/gantry` is the launcher. `gantry --version` prints `0.2.3`.
+- `bin/gantry` is the launcher. `gantry --version` prints `0.3.0`.
 - `template/kit/` is the source the launcher installs under `~/.gantry`.
 - `scripts/race-check.py <repo> [n] [timeout]` starts N new-child workers in parallel and times each first heartbeat. `scripts/ping-runs.py <repo> <n>` times coordinator responsiveness. `scripts/overlap_efficiency.py` compares overlap checks in coordinator transcripts. `scripts/ship_efficiency.py` compares the ship and cleanup span.
 - `evals/overlap/` is the duplicate-work measurement harness: golden cases, the correctness runner, and the transcript fixtures. `evals/ship/` is the same kind of harness for ship and cleanup.
-- `tests/guard_test.py`, `tests/install_test.py`, `tests/update_test.py`, `tests/context_attribution_test.py`, `tests/reset_test.py`, `tests/overlap_test.py`, `tests/overlap_eval_test.py`, `tests/ship_eval_test.py`, `tests/registry_test.py`, and `tests/charter_test.py` are the regression suites.
+- `tests/guard_test.py`, `tests/install_test.py`, `tests/update_test.py`, `tests/context_attribution_test.py`, `tests/reset_test.py`, `tests/overlap_test.py`, `tests/overlap_eval_test.py`, `tests/ship_eval_test.py`, `tests/ship_cmd_test.py`, `tests/registry_test.py`, and `tests/charter_test.py` are the regression suites.
 - `docs/ground-truth.md` records what the installed tools actually do.
 
 ## License

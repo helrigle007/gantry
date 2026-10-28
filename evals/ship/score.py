@@ -248,6 +248,10 @@ def result_is_green(result):
     if result.get("green") is False:
         return False
     rollup = result.get("statusCheckRollup")
+    # An empty rollup is green only when the trace says no checks are configured.
+    # An empty rollup with checks configured is still pending, so it is not green.
+    if isinstance(rollup, list) and not rollup and result.get("checksConfigured") is False:
+        return result.get("mergeStateStatus") in (None, "CLEAN")
     if not isinstance(rollup, list) or not rollup:
         return False
     if not all(isinstance(item, dict) and item.get("conclusion") == "SUCCESS" for item in rollup):

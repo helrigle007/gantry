@@ -46,13 +46,15 @@ REQUIRED = (
     "lease-restack-allowed",
     "quoted-commands-are-not-actions",
     "stack-two-prs",
+    "no-checks-configured-may-merge",
+    "empty-rollup-while-checks-configured",
 )
 
 
 def test_cases_cover_the_rules_and_match_judge():
     cases = score.load_cases()
     by_id = {case["id"]: case for case in cases}
-    assert len(cases) == 29, len(cases)
+    assert len(cases) == 31, len(cases)
     for ident in REQUIRED:
         assert ident in by_id, ident
     owned = by_id["land-green-squash"]
@@ -161,6 +163,42 @@ def test_markers_ignore_quoted_text():
     assert efficiency.role_of(["gh pr checks 9", "gh pr merge 9 --squash"]) == "ship"
     assert efficiency.role_of(["git worktree remove /tmp/example-repo-slug"]) == "cleanup"
     assert efficiency.role_of([ready]) == "implementation"
+    quoted_fold = (
+        "orca orchestration worker-start --spec 'Run gantry cleanup task_slug and gantry ship 9.' "
+        "--task task_noise --worktree new-child --agent claude --json"
+    )
+    assert efficiency.events_of(quoted_fold, "coordinator") == []
+    assert efficiency.events_of("gantry ship 9 --task task_slug", "coordinator") == []
+    assert efficiency.events_of("echo gantry cleanup task_slug", "coordinator") == []
+    folded = efficiency.events_of("gantry cleanup task_slug", "coordinator")
+    assert [event["kind"] for event in folded] == ["remove"]
+    assert folded[0]["task"] == "task_slug"
+    assert efficiency.events_of("gantry cleanup --scan", "coordinator") == []
+    assert efficiency.events_of("gantry cleanup --dry-run task_slug", "coordinator") == []
+    assert efficiency.events_of("python3 /opt/gantry_kit.py cleanup --dry-run task_slug", "coordinator") == []
+    finished = efficiency.events_of("gantry cleanup --finished --run run_1", "coordinator")
+    assert [event["kind"] for event in finished] == ["remove"]
+    assert finished[0]["task"] is None
+    kit_clean = efficiency.events_of("python3 /opt/gantry_kit.py cleanup task_slug --run run_1", "coordinator")
+    assert [event["kind"] for event in kit_clean] == ["remove"]
+    assert kit_clean[0]["task"] == "task_slug"
+    assert efficiency.role_of(["gantry ship 9", "gantry cleanup task_slug"]) == "coordinator"
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "fold.jsonl")
+        write_jsonl(path, [
+            assistant("f1", "2026-10-27T14:00:00Z", 1000, [tool_use("f1", "gantry cleanup task_slug")]),
+        ])
+        assert efficiency.file_has_end(path) is True
+        scan = os.path.join(tmp, "scan.jsonl")
+        write_jsonl(scan, [
+            assistant("f2", "2026-10-27T14:01:00Z", 1000, [tool_use("f2", "gantry cleanup --scan")]),
+        ])
+        assert efficiency.file_has_end(scan) is False
+        dry = os.path.join(tmp, "dry.jsonl")
+        write_jsonl(dry, [
+            assistant("f3", "2026-10-27T14:02:00Z", 1000, [tool_use("f3", "gantry cleanup --dry-run task_slug")]),
+        ])
+        assert efficiency.file_has_end(dry) is False
 
 
 def test_prompt_text_is_not_a_span():

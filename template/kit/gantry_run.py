@@ -239,11 +239,20 @@ def next_step(state):
     titled = {task["title"] for task in state["tasks"]}
     settled_prs = [task for task in state["tasks"] if task["pr"] and task["status"] in SETTLED]
     if settled_prs and "gantry-ship" not in titled and not active:
-        return "Every implementation task has settled. Dispatch the ship worker."
+        if not state.get("autoMerge"):
+            return (
+                "Every implementation task has settled and autoMerge is false. "
+                "Dispatch the ship worker to babysit. Do not run gantry ship."
+            )
+        return (
+            "Every implementation task has settled. "
+            "Read gantry-ship.md and run gantry ship for each independent PR. "
+            "A stacked PR still needs the ship worker."
+        )
     if any(task["title"] == "gantry-ship" and task["status"] in SETTLED for task in state["tasks"]):
         if not state.get("autoMerge"):
             return "Ship worker has settled and autoMerge is false. Create the landing task and its gate."
-        return "Ship worker has settled. Report what landed and offer cleanup."
+        return "Ship worker has settled. Report what landed. Clean up with gantry cleanup when the user asks."
     return "No ready task and no worker in flight. Report status to the user."
 
 

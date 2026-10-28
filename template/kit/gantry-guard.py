@@ -745,7 +745,7 @@ def gh_pr(ctx, repo, opts, pos):
         return
     if pos[1:2] != ["merge"]:
         return
-    need(ctx.role == "worker", f"coordinator never merges; the {SHIP_TASK_TITLE} worker merges per Shipping")
+    need(ctx.role == "worker", f"coordinator never runs gh pr merge; use gantry ship for an independent PR. A stack stays with the {SHIP_TASK_TITLE} worker")
     need(ctx.task_title == SHIP_TASK_TITLE,
          f"only the {SHIP_TASK_TITLE} worker merges; do not merge, report the PR as ready in worker_done")
     need(repo.auto_merge, "autoMerge is false in .git/gantry.json: bring PRs to merge-ready and stop")
@@ -846,13 +846,25 @@ def deny_source(_ctx, _args):
     deny("source and . run a file the guard does not read; run the commands directly")
 
 
-COORD_GANTRY = ("overlap", "charter")
+COORD_GANTRY = ("overlap", "charter", "ship", "cleanup")
 
 def coord_gantry(args):
     return bool(args) and args[0] in COORD_GANTRY
 
+def gantry_blocked_flag(token):
+    name = token.split("=", 1)[0]
+    if name in {"--admin", "--auto", "--force", "-f"}:
+        return True
+    if name.startswith("--force") or name.startswith("--admin") or name.startswith("--auto"):
+        return True
+    return name.startswith("-") and not name.startswith("--") and "f" in name[1:]
+
 def check_gantry(ctx, args):
-    need(ctx.role == "coordinator" and coord_gantry(args), "only the coordinator runs gantry, and only gantry overlap or gantry charter")
+    need(ctx.role == "coordinator" and coord_gantry(args), "only the coordinator runs gantry, and only gantry overlap, gantry charter, gantry ship, or gantry cleanup")
+    if args and args[0] in ("ship", "cleanup"):
+        need(not any(gantry_blocked_flag(token) for token in args[1:]), "gantry ship and gantry cleanup reject --admin, --auto, and --force")
+        if args[0] == "ship":
+            need(ctx.repo().auto_merge, "autoMerge is false in .git/gantry.json: bring PRs to merge-ready and stop")
 
 def launcher_args(argv):
     for index, token in enumerate(argv):

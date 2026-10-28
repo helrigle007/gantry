@@ -15,8 +15,8 @@ from dataclasses import dataclass
 BASH = "/usr/bin/bash"
 BASH_PREFIX = "GNU bash, version 5.2.21"
 PYTHON_VERSIONS = ("3.12.3", "3.11")
-SYNC_COMMIT = "039bd7b3e462bbc98abf0237e4e09ef19a5dd197"
-SYNC_BLOB = "64713619ef6c7b2d34c68fe721544c021e7d7c66"
+SYNC_COMMIT = "e13cc9870d596deb39de71d2e526657aba3c8c18"
+SYNC_BLOB = "ed07e6a9e84d30d83316b0af2f96438af0908cf1"
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 GUARD_PATH = os.path.join(ROOT, "template", "kit", "gantry-guard.py")
 KIT_PATH = os.path.join(ROOT, "template", "kit", "gantry_kit.py")
@@ -57,7 +57,7 @@ PROPS = {
     ),
     "coordinator-no-merge": (
         "The coordinator is denied every checked command for which bash executes gh pr merge.",
-        "The coordinator would merge a PR instead of the gantry-ship worker.",
+        "The coordinator would merge with gh pr merge instead of gantry ship.",
     ),
     "coordinator-no-write": (
         "The coordinator is denied bash that creates a file, a heredoc, git commit, git reset, or rm.",
@@ -128,8 +128,8 @@ PROPS = {
         "A corrupt registry would police a repo with no config, or would ignore a repo that has one.",
     ),
     "worker-gantry": (
-        "A worker cannot run gantry or gantry_kit.py. The coordinator may run gantry overlap and gantry charter, and nothing else under gantry.",
-        "A worker would uninstall the kit, record an overlap verdict, or rewrite the user's charter.",
+        "A worker cannot run gantry or gantry_kit.py. The coordinator may run gantry overlap, gantry charter, gantry ship, and gantry cleanup, and nothing else under gantry. gantry ship is denied while autoMerge is false and when the argv carries --admin, --auto, or --force. gantry cleanup is denied when the argv carries --force.",
+        "A worker would uninstall the kit, record an overlap verdict, rewrite the user's charter, or merge through gantry ship.",
     ),
     "worker-home-write": (
         "A worker is denied Edit, Write, MultiEdit, and NotebookEdit of $HOME/.gantry and every path under it, written absolute or with a leading ~. Read and cat of those paths stay allowed.",
@@ -334,13 +334,13 @@ MUTATIONS = {
     "worker-gantry": (
         ["worker-gantry"],
         [(
-            "def check_gantry(ctx, args):\n    need(ctx.role == \"coordinator\" and coord_gantry(args), \"only the coordinator runs gantry, and only gantry overlap or gantry charter\")\n",
+            "def check_gantry(ctx, args):\n    need(ctx.role == \"coordinator\" and coord_gantry(args), \"only the coordinator runs gantry, and only gantry overlap, gantry charter, gantry ship, or gantry cleanup\")\n",
             "def check_gantry(ctx, args):\n    return\n",
         )],
     ),
     "coord-charter": (
         ["worker-gantry"],
-        [('COORD_GANTRY = ("overlap", "charter")', 'COORD_GANTRY = ("overlap",)')],
+        [('COORD_GANTRY = ("overlap", "charter", "ship", "cleanup")', 'COORD_GANTRY = ("overlap", "ship", "cleanup")')],
     ),
     "worker-home-write": (
         ["worker-home-write"],
@@ -1203,9 +1203,34 @@ def gantry_checks(guard, paths):
         ("coord-charter", "coord", "gantry charter add --global 'Never force-push a shared branch.'", True),
         ("coord-charter", "coord", "gantry charter list", True),
         ("coord-charter", "coord", "gantry charter rm r-fc5233", True),
+        ("worker-ship", "worker", "gantry ship 9", False),
+        ("worker-cleanup", "worker", "gantry cleanup task_impl", False),
+        ("ship-worker", "ship", "gantry ship 9", False),
+        ("coord-ship", "coord", "gantry ship 9", True),
+        ("coord-ship-task", "coord", "gantry ship 9 --task task_impl", True),
+        ("coord-kit-ship", "coord", "python3 /opt/gantry_kit.py ship 9", True),
+        ("coord-cleanup", "coord", "gantry cleanup task_impl", True),
+        ("coord-cleanup-scan", "coord", "gantry cleanup --scan", True),
+        ("coord-cleanup-dry", "coord", "gantry cleanup --dry-run task_impl", True),
+        ("coord-cleanup-finished", "coord", "gantry cleanup --finished", True),
+        ("coord-kit-cleanup", "coord", "python3 /opt/gantry_kit.py cleanup task_impl", True),
     ]
     for where, role, command, allow in rows:
         failures += expect(guard, paths, prop, where, role, "Bash", {"command": command}, allow)
+    denied = [
+        ("ship-held", "gantry ship 9", {"auto": False}),
+        ("ship-admin", "gantry ship 9 --admin", {}),
+        ("ship-auto", "gantry ship 9 --auto", {}),
+        ("ship-force", "gantry ship 9 --force", {}),
+        ("ship-lease", "gantry ship 9 --force-with-lease", {}),
+        ("ship-short-force", "gantry ship 9 -f", {}),
+        ("kit-admin", "python3 /opt/gantry_kit.py ship 9 --admin", {}),
+        ("cleanup-force", "gantry cleanup --force task_impl", {}),
+        ("cleanup-short-force", "gantry cleanup task_impl -f", {}),
+        ("cleanup-lease", "gantry cleanup --force-with-lease task_impl", {}),
+    ]
+    for where, command, opts in denied:
+        failures += expect(guard, paths, prop, where, "coord", "Bash", {"command": command}, False, **opts)
     return failures
 
 
