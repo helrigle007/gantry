@@ -23,7 +23,7 @@ try:
 except ImportError:  # pragma: no cover
     fcntl = None
 
-VERSION = "0.3.0"
+VERSION = "0.3.1"
 AGENT_NAME = "gantry-coordinator"
 HOOK_MARK = ".gantry/current/kit/"
 RUN_EVENTS = ("PreCompact", "SessionStart", "UserPromptSubmit")

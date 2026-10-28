@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.1
+
+- The coordinator speaks only when the state the user cares about changes, one line per event: a task started, a pull request opened, a pull request landed, a block, or a question. It does not recap the plan or narrate heartbeats, waits, fetches, or gate listings. The landed line is the whole report unless something unexpected happened.
+- A wave uses one background mailbox wait for the first heartbeat, then one wait per later message. It does not start another wait to watch heartbeats. Claude Code's own background-command notices are unchanged.
+- Overlap stop verdicts, the guard, and ship and cleanup rules are unchanged. A stop is still a question with Proceed and Hold.
+- `gantry --version` prints `0.3.1`.
+
 ## 0.3.0
 
 - `gantry ship` lands a pull request whose check rollup is empty when the repo has no Actions workflows and no required status checks on the base branch. A private repo on a plan that cannot enable branch protection returns HTTP 403 (`Upgrade to GitHub Pro` or `plan-not-available`) from the protection and rules endpoints; that counts as no required status checks, not an unknown read. When checks are configured but none have registered yet, it polls a few times and blocks only if the rollup stays empty or a check is not green. Any other error reading those endpoints stays unknown and follows that poll. Red, pending, and failing checks still block.

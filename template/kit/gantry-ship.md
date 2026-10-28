@@ -12,7 +12,7 @@ When `autoMerge` is true, run this once per settled pull request whose base is t
 
 `gantry ship <number-or-url> --task <task id>`
 
-You may chain several of those with `;` in one Bash call. Read each JSON line.
+You may chain several of those with `;` in one Bash call. Read each JSON line. What you print for each line is the Say this to the user section. Do not restate the JSON.
 
 - `landed`: checks were green, or the repo has no Actions workflows and no required status checks, so an empty rollup is not a failure. The pull request was squash-merged at that head, and the head was deleted only when this run recorded that branch and it is not the default branch. The task is marked completed.
 - `blocked`: checks were red, pending, or failing; checks are configured but none registered after a short wait (`checks have not registered`); the pull request was closed unmerged; the head was the default branch; or this run has no record of the pull request. When the reason is `checks have not registered`, run `gantry ship` again. Do not ask and do not start a fix task. Any other blocked reason: do not clean up. Dispatch a fix task on the Bug fix playbook, Base set to that pull request's branch, ownership of that pull request only. The fix worker pushes to the same branch. Ship again after it settles.
@@ -35,7 +35,7 @@ Charter: <as in an implementation spec>
 Land these PRs: <urls, bottom-to-top per stack>
 <GANTRY WORKER RULES>
 Dependency order: <parent -> child chains>
-Report per PR in worker_done: landed with merge commit, or not landed with the verdict and reason. If a landing decision needs a human, ask the coordinator.
+Report per PR in worker_done, one line each: landed with merge commit, or not landed with the verdict and reason. If a landing decision needs a human, ask the coordinator. The coordinator prints one Say line to the user and does not forward this report.
 ```
 
 Give `gantry-ship` only to this worker and to a landing task. A pull request the ship worker reports as not landed because verification failed gets the same fix task as a `blocked` line above.
@@ -51,19 +51,36 @@ Playbook: Babysit (playbooks/babysit.md). Read that file before acting. Do not m
 Charter: <as in an implementation spec>
 Babysit these PRs to merge-ready, drive mode: <urls>
 <GANTRY WORKER RULES>
-Report per PR in worker_done: merge-ready or blocked, with the reason.
+Report per PR in worker_done, one line each: merge-ready or blocked, with the reason. The coordinator prints one Say line to the user and does not forward this report.
 ```
 
-After that worker settles, create a landing task with `task-create --task-title gantry-ship --spec 'Land <urls>'`, and put the Charter line under `Land <urls>` as in an implementation spec. Put a gate on it: `gate-create --task <land task> --question "PRs are merge-ready and autoMerge is false. Land them?" --options '["land (set autoMerge true first)","hold"]'`. Report the gate and keep a background mailbox wait running. Nothing lands until the user resolves the gate and `autoMerge` reads true. Then run `gantry ship` for each independent pull request, or dispatch the stacked ship worker when a line comes back `stack`.
+After that worker settles, create a landing task with `task-create --task-title gantry-ship --spec 'Land <urls>'`, and put the Charter line under `Land <urls>` as in an implementation spec. Put a gate on it: `gate-create --task <land task> --question "PRs are merge-ready and autoMerge is false. Land them?" --options '["land (set autoMerge true first)","hold"]'`. Print that question as the Say line below, and keep a background mailbox wait running. Nothing lands until the user resolves the gate and `autoMerge` reads true. Then run `gantry ship` for each independent pull request, or dispatch the stacked ship worker when a line comes back `stack`.
 
 ## Clean up
 
 Run this when the user asks, including a bare "clean up", and after a landed ship when the user said to just clean up. Do not dispatch `gantry-cleanup`.
 
-1. `gantry cleanup --scan` prints one JSON line per task. `op` is `remove`, `close`, or `skip`, with the reason. Show that list before anything is removed.
-2. When the user said to just clean up, run `gantry cleanup --finished`. It acts on every line whose `op` is `remove` or `close`.
-3. Otherwise run `gantry cleanup <task>` only for tasks the user confirms. Several task ids may go in one command.
+1. `gantry cleanup --scan` prints one JSON line per task. `op` is `remove`, `close`, or `skip`, with the reason. Read it. Do not paste it.
+2. When the user said to just clean up, run `gantry cleanup --finished`. It acts on every line whose `op` is `remove` or `close`. Do not ask again.
+3. Otherwise run `gantry cleanup <task>` only for tasks the user confirms. Several task ids may go in one command. The confirmation is the question line in Say this to the user.
 
 The command refuses `--force`. It skips a dirty tree, an unmerged branch, commits that are not on the default branch, a running worker, the caller's cwd, and a worktree a live worker is in. A settled worker whose worktree is the main checkout has its terminal closed, and the checkout stays. A released `--worktree current` terminal that worker-list still shows as settled `user_takeover` is closed the same way. A removed or closed task is marked completed, and a settled dispatch is released.
 
 A terminal that worker-list does not show is left open. It may be the operator's.
+
+## Say this to the user
+
+The coordinator prompt's Say section is the whole user-facing report. Do not restate this file, the scan JSON, or a worker_done body.
+
+```
+✓ landed #N · squash-merged · cleaned up
+! blocked #N · <short reason> · <what happens next>
+? <question>
+```
+
+- After `landed`, and cleanup for that task has finished: `✓ landed #N · squash-merged · cleaned up`. That line is the whole report. One short detail line under it, indented two spaces, only when something unexpected happened.
+- After `landed`, when this procedure does not clean up: `✓ landed #N · squash-merged · left in place`.
+- `blocked`, other than `checks have not registered`: `! blocked #N · <short reason> · <what happens next>`, then the fix task this file already specifies. Do not explain the playbook. `checks have not registered` retries `gantry ship` with no line. Print the blocked line only if that retry stays blocked.
+- `stack`: the started line for the ship worker. No landed line, and no paragraph about restack.
+- autoMerge false: `? PRs are merge-ready and autoMerge is false. Land them?` then `1. Land (set autoMerge true first)` and `2. Hold`.
+- Cleanup that still needs a confirmation: `? Clean up these tasks?` then one numbered option per `remove` or `close` task (`<task> (<op>)`) and a Hold option. Do not paste the scan JSON.
