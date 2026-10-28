@@ -15,8 +15,8 @@ from dataclasses import dataclass
 BASH = "/usr/bin/bash"
 BASH_PREFIX = "GNU bash, version 5.2.21"
 PYTHON_VERSIONS = ("3.12.3", "3.11")
-SYNC_COMMIT = "e13cc9870d596deb39de71d2e526657aba3c8c18"
-SYNC_BLOB = "ed07e6a9e84d30d83316b0af2f96438af0908cf1"
+SYNC_COMMIT = "b728431efff8c178ff8551cd4cbffe36e158fc6a"
+SYNC_BLOB = "98b176542e66fba9ff9152007781f695f25a0139"
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 GUARD_PATH = os.path.join(ROOT, "template", "kit", "gantry-guard.py")
 KIT_PATH = os.path.join(ROOT, "template", "kit", "gantry_kit.py")
