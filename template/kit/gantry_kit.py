@@ -2150,9 +2150,17 @@ def gh_api(path):
         except ValueError:
             return None, "error"
     text = f"{err or ''}\n{out or ''}"
+    return None, _api_failure(text)
+
+
+def _api_failure(text):
+    """absent is a missing resource. plan is a free private repo that cannot enable protection."""
+    lowered = text.lower()
+    if "upgrade to github pro" in lowered or "plan-not-available" in lowered:
+        return "plan"
     if "404" in text or "Not Found" in text:
-        return None, "absent"
-    return None, "error"
+        return "absent"
+    return "error"
 
 
 def _nonempty(value):
@@ -2160,11 +2168,17 @@ def _nonempty(value):
 
 
 def checks_configured(slug, branch):
-    """True when this repo expects checks. False when none are configured. None when unknown."""
+    """True when this repo expects checks. False when none are configured. None when unknown.
+
+    Branch protection and rulesets on a private repo whose plan cannot enable
+    them return HTTP 403 ("Upgrade to GitHub Pro" or plan-not-available). That
+    feature cannot exist there, so the 403 is no required checks. Any other
+    error stays unknown. A plan response from the workflows list stays unknown.
+    """
     unknown = False
     configured = False
     workflows, werr = gh_api(f"repos/{slug}/actions/workflows")
-    if werr == "error":
+    if werr in ("error", "plan"):
         unknown = True
     elif isinstance(workflows, dict):
         count = workflows.get("total_count")
@@ -2180,7 +2194,7 @@ def checks_configured(slug, branch):
     rules, rerr = gh_api(f"repos/{slug}/rules/branches/{encoded}")
     if rerr == "error":
         unknown = True
-    else:
+    elif rerr != "plan":
         rows = rules
         if isinstance(rules, dict):
             rows = rules.get("rules") or []

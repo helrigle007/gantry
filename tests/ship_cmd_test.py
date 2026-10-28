@@ -55,6 +55,7 @@ class World:
         self.required = None
         self.rules = []
         self.workflows_error = False
+        self.required_error = None
         self.rules_error = False
         self.sleeps = []
         self.merged_heads = set()
@@ -185,12 +186,15 @@ class World:
                 return 1, "", "HTTP 500"
             return 0, json.dumps(self.workflows), ""
         if path.endswith("/protection/required_status_checks"):
+            if self.required_error:
+                return 1, "", self.required_error
             if self.required is None:
                 return 1, "", "gh: Branch not protected (HTTP 404)"
             return 0, json.dumps(self.required), ""
         if "/rules/branches/" in path:
             if self.rules_error:
-                return 1, "", "HTTP 500"
+                text = self.rules_error if isinstance(self.rules_error, str) else "HTTP 500"
+                return 1, "", text
             return 0, json.dumps(self.rules), ""
         return 1, "", "unexpected api"
 
@@ -751,6 +755,53 @@ def test_ship_empty_rollup_depends_on_whether_checks_are_configured():
         tmp.cleanup()
 
 
+UPGRADE_403 = (
+    "gh: Upgrade to GitHub Pro or make this repository public to enable this feature. (HTTP 403)"
+)
+PLAN_403 = "HTTP 403 plan-not-available"
+
+
+def test_ship_treats_a_free_plan_protection_403_as_no_checks():
+    tmp, fx = world()
+    try:
+        fx.view["statusCheckRollup"] = []
+        fx.required_error = UPGRADE_403
+        fx.rules_error = PLAN_403
+        code, line, _err = fx.ship(["9", "--task", "task_slug", "--run", "run_1"])
+        assert code == 0, line
+        assert line["status"] == "landed", line
+        assert fx.sleeps == []
+        assert merges_of(fx) == ["merge"]
+        assert fx.trace.count("view") == 1
+    finally:
+        tmp.cleanup()
+    tmp, fx = world()
+    try:
+        fx.workflows = {"total_count": 1, "workflows": [{"name": "ci", "state": "active"}]}
+        fx.view["statusCheckRollup"] = []
+        fx.required_error = UPGRADE_403
+        fx.rules_error = UPGRADE_403
+        code, line, _err = fx.ship(["9", "--run", "run_1"])
+        assert line["status"] == "blocked", line
+        assert line["reason"] == "checks have not registered"
+        assert fx.sleeps == [kit.CHECK_PAUSE] * kit.CHECK_POLLS
+        assert merges_of(fx) == []
+    finally:
+        tmp.cleanup()
+    tmp, fx = world()
+    try:
+        fx.view["statusCheckRollup"] = []
+        fx.required_error = "gh: Resource not accessible by integration (HTTP 403)"
+        fx.rules_error = "HTTP 500"
+        code, line, _err = fx.ship(["9", "--run", "run_1"])
+        assert line["status"] == "blocked", line
+        assert line["reason"] == "checks have not registered"
+        assert fx.sleeps == [kit.CHECK_PAUSE] * kit.CHECK_POLLS
+        assert merges_of(fx) == []
+    finally:
+        tmp.cleanup()
+
+
 def test_ship_merge_argv_is_squash_at_the_verified_head():
     tmp, fx = world()
     captured = []
@@ -783,6 +834,7 @@ if __name__ == "__main__":
     test_ship_skips_merge_when_already_merged_and_still_deletes()
     test_ship_blocks_a_closed_pr_and_a_failed_merge()
     test_ship_empty_rollup_depends_on_whether_checks_are_configured()
+    test_ship_treats_a_free_plan_protection_403_as_no_checks()
     test_ship_merge_argv_is_squash_at_the_verified_head()
     test_cleanup_removes_a_merged_worktree_and_updates_state()
     test_cleanup_skips_dirty_unmerged_and_unpushed()
@@ -791,4 +843,4 @@ if __name__ == "__main__":
     test_cleanup_finished_removes_and_a_close_error_still_updates_state()
     test_cleanup_retries_state_when_the_worktree_is_already_gone()
     test_cleanup_skips_its_own_terminal_and_still_removes()
-    print("20/20 passed")
+    print("21/21 passed")
