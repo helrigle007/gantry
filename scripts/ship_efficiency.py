@@ -307,7 +307,7 @@ def cleanup_task(rest):
 def is_coordinator_argv(argv):
     if is_mailbox(argv):
         return True
-    if gantry_verb(argv) in ("ship", "cleanup"):
+    if gantry_verb(argv) in ("ship", "cleanup", "wait"):
         return True
     return any(token in COORD_TOKENS for token in argv)
 

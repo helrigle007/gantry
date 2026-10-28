@@ -11,7 +11,7 @@
 
 ## How to get to it (user POV)
 
-The operator does not run it. The coordinator, started with `gantry` on the main checkout, runs `~/.gantry/current/kit/gantry-mailbox wait` as a background Bash call for the life of the Run.
+The operator does not run it. The coordinator, started with `gantry` on the main checkout, runs one background `gantry wait` per expected event. That command starts this daemon and blocks until a heartbeat has failed or a message needs the coordinator.
 
 ## Driving it with sandbox.sh
 

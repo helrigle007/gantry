@@ -15,12 +15,15 @@
     "Main current. Starting worker.",
     "Listing decision gates",
     "Before the PR",
-    "One background mailbox wait per expected event",
-    "Do not start a second wait for heartbeats"
+    "One background `gantry wait` per expected event",
+    "Do not wait on heartbeats yourself"
   ],
   "absent": [
     "Report tersely",
-    "report that preview to the user"
+    "report that preview to the user",
+    "One background mailbox wait per expected event",
+    "Do not start a second wait for heartbeats",
+    "gantry-mailbox wait --types heartbeat"
   ],
   "ship_formats": [
     "✓ landed #N · squash-merged · cleaned up",

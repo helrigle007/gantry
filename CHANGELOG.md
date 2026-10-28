@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.2
+
+- `gantry wait` confirms each dispatched worker's first heartbeat and then waits on the mailbox, in one blocking call. It prints one JSON line and returns when the coordinator must act: a question, a pre-pr request, an escalation, a worker_done, a failure, or a timeout. Heartbeats and status stay inside the command.
+- A worker with no heartbeat inside 180 seconds is a failure. The command reads the worker and leaves it running. It does not retry or stop it. A worker whose heartbeat is older than five minutes, after it had one, and that is not waiting on a question, is a failure for the same reason: stalled, left running.
+- The coordinator runs one background `gantry wait` per expected event. The heartbeat procedure is no longer in the coordinator prompt. Quiet mode is unchanged: one line when the state changes, and questions and failures are always shown.
+- The guard lets the coordinator run `gantry wait` and still denies it to workers.
+- `gantry --version` prints `0.3.2`.
+
 ## 0.3.1
 
 - The coordinator speaks only when the state the user cares about changes, one line per event: a task started, a pull request opened, a pull request landed, a block, or a question. It does not recap the plan or narrate heartbeats, waits, fetches, or gate listings. The landed line is the whole report unless something unexpected happened.

@@ -155,6 +155,7 @@ def test_markers_ignore_quoted_text():
     assert [event["kind"] for event in efficiency.events_of(removed, "cleanup")] == ["remove"]
     assert efficiency.file_has_end(os.path.join(BEFORE, "synthetic-before-cleanup.jsonl")) is True
     assert efficiency.file_has_end(os.path.join(BEFORE, "synthetic-before-ship.jsonl")) is False
+    assert efficiency.role_of(["gantry wait"]) == "coordinator"
     assert efficiency.role_of([
         "~/.gantry/current/kit/gantry-mailbox wait --types worker_done --timeout-ms 180000",
         "gh pr checks 9 --repo example-org/example-repo",

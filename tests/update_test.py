@@ -84,7 +84,8 @@ def case_agent_brief(_fx):
         ("! blocked #N · <short reason> · <what happens next>" in text, "blocked line is fixed"),
         ("? <question>" in text, "question line is fixed"),
         ("nothing needs your input" in text and "No plan recap" in text, "recap and idle narration are forbidden"),
-        ("Do not start a second wait for heartbeats" in text, "heartbeat waits are not repeated"),
+        ("gantry wait" in text and "Do not start a second wait" in text, "one gantry wait per event"),
+        ("gantry-mailbox wait --types heartbeat" not in text, "heartbeat confirmation is not a coordinator wait"),
         ("Report tersely" not in text, "the old report paragraph is gone"),
         ("✓ landed #N · squash-merged · cleaned up" in read(os.path.join(ROOT, "template", "kit", "gantry-ship.md")), "ship doc uses the landed line"),
         ("Show that list" not in read(os.path.join(ROOT, "template", "kit", "gantry-ship.md")), "ship doc does not dump the scan"),
@@ -106,7 +107,7 @@ def case_refresh_and_current(fx):
         (refreshed.returncode == 0, refreshed.stderr),
         ("refreshed ~/.gantry" in refreshed.stdout, refreshed.stdout),
         ("no PR opened" in refreshed.stdout, "update opens no PR"),
-        ("0.3.1 -> 0.3.1" in refreshed.stdout, refreshed.stdout),
+        ("0.3.2 -> 0.3.2" in refreshed.stdout, refreshed.stdout),
         (not os.path.exists(fx.gh_log), "gh was not called"),
         (again.returncode == 0 and "already matches the template" in again.stdout, again.stdout),
         (fx.git("rev-parse", "HEAD") == head, "operator HEAD unchanged"),
@@ -139,7 +140,7 @@ def case_tag(fx):
     os.makedirs(os.path.join(source, "bin"))
     shutil.copy(GANTRY, os.path.join(source, "bin", "gantry"))
     kit = os.path.join(source, "template", "kit", "gantry_kit.py")
-    write(kit, read(kit).replace('VERSION = "0.3.1"', 'VERSION = "9.9.9"', 1))
+    write(kit, read(kit).replace('VERSION = "0.3.2"', 'VERSION = "9.9.9"', 1))
     subprocess.run(["git", "init", "-q", "-b", "main", source], check=True)
     subprocess.run(["git", "-C", source, "-c", "user.name=t", "-c", "user.email=t@example.com", "add", "template", "bin"], check=True)
     subprocess.run(["git", "-C", source, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "-m", "tag me"], check=True)

@@ -54,7 +54,7 @@ Babysit these PRs to merge-ready, drive mode: <urls>
 Report per PR in worker_done, one line each: merge-ready or blocked, with the reason. The coordinator prints one Say line to the user and does not forward this report.
 ```
 
-After that worker settles, create a landing task with `task-create --task-title gantry-ship --spec 'Land <urls>'`, and put the Charter line under `Land <urls>` as in an implementation spec. Put a gate on it: `gate-create --task <land task> --question "PRs are merge-ready and autoMerge is false. Land them?" --options '["land (set autoMerge true first)","hold"]'`. Print that question as the Say line below, and keep a background mailbox wait running. Nothing lands until the user resolves the gate and `autoMerge` reads true. Then run `gantry ship` for each independent pull request, or dispatch the stacked ship worker when a line comes back `stack`.
+After that worker settles, create a landing task with `task-create --task-title gantry-ship --spec 'Land <urls>'`, and put the Charter line under `Land <urls>` as in an implementation spec. Put a gate on it: `gate-create --task <land task> --question "PRs are merge-ready and autoMerge is false. Land them?" --options '["land (set autoMerge true first)","hold"]'`. Print that question as the Say line below, and keep one background `gantry wait` running. Nothing lands until the user resolves the gate and `autoMerge` reads true. Then run `gantry ship` for each independent pull request, or dispatch the stacked ship worker when a line comes back `stack`.
 
 ## Clean up
 

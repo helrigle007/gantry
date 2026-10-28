@@ -16,6 +16,7 @@ sys.dont_write_bytecode = True
 import tempfile
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from urllib.parse import quote
 
 try:
@@ -23,7 +24,7 @@ try:
 except ImportError:  # pragma: no cover
     fcntl = None
 
-VERSION = "0.3.1"
+VERSION = "0.3.2"
 AGENT_NAME = "gantry-coordinator"
 HOOK_MARK = ".gantry/current/kit/"
 RUN_EVENTS = ("PreCompact", "SessionStart", "UserPromptSubmit")
@@ -39,6 +40,7 @@ USAGE = """usage: gantry install [repo] [--repair]
        gantry charter list
        gantry charter rm <id>
        gantry ship <pr> [--task <id>] [--run <id>]
+       gantry wait [--run <id>] [--timeout-ms N] [--heartbeat-ms N] [--stall-ms N] [--dispatch <id>]
        gantry cleanup <task> [--run <id>] [--dry-run]
        gantry cleanup --scan [--run <id>]
        gantry cleanup --finished [--run <id>] [--dry-run]
@@ -1830,6 +1832,13 @@ SHIP_VALUED = {"--task", "--run"}
 CLEAN_VALUED = {"--run"}
 CLEAN_FLAGS = {"--dry-run", "--scan", "--finished", "--run"}
 SETTLED_STATUS = {"completed", "failed"}
+WAIT_TIMEOUT_MS = 180000
+WAIT_HEARTBEAT_MS = 180000
+WAIT_STALL_MS = 300000
+WAIT_MAX_MS = 200000
+WAIT_POLL_S = 1
+WAIT_QUIET = {"heartbeat", "status"}
+WAIT_BLOCKING = {"question", "escalation", "pre-pr", "pre_pr", "prepr"}
 
 
 def invoke(argv, cwd=None, timeout=30):
@@ -2696,6 +2705,451 @@ def collect_workers(runs):
     return rows, errors
 
 
+def monotonic_now():
+    return time.monotonic()
+
+
+def wall_now():
+    return datetime.now(timezone.utc)
+
+
+def start_mailbox(run):
+    """Start the mailbox daemon when this Run does not already have one."""
+    if fcntl is None:
+        return
+    directory = os.path.join(os.environ.get("TMPDIR", "/tmp"), "gantry-mailbox", run)
+    os.makedirs(directory, exist_ok=True)
+    with open(os.path.join(directory, "lock"), "w") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            return
+        fcntl.flock(lock, fcntl.LOCK_UN)
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gantry-mailbox")
+    subprocess.Popen(
+        [sys.executable, script, "daemon", run],
+        start_new_session=True,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    pause(1)
+
+
+def wait_dir(run):
+    path = os.path.join(os.environ.get("TMPDIR", "/tmp"), "gantry-mailbox", run)
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def wait_payload(status, reason="", **extra):
+    payload = {"status": status}
+    if reason:
+        payload["reason"] = reason
+    for key, value in extra.items():
+        if value is None or value == "" or value == []:
+            continue
+        payload[key] = value
+    return payload
+
+
+def parse_ms(text, name, cap=None):
+    try:
+        value = int(text)
+    except (TypeError, ValueError):
+        die(f"{name} needs an integer number of milliseconds")
+    if value <= 0:
+        die(f"{name} must be greater than 0")
+    if cap is not None and value > cap:
+        die(f"{name} must be {cap} ms or less")
+    return value
+
+
+def parse_wait_args(argv):
+    timeout_ms, heartbeat_ms, stall_ms = WAIT_TIMEOUT_MS, WAIT_HEARTBEAT_MS, WAIT_STALL_MS
+    run, dispatches = "", []
+    index = 0
+    valued = {"--run": "run", "--timeout-ms": "timeout", "--heartbeat-ms": "heartbeat", "--stall-ms": "stall", "--dispatch": "dispatch"}
+    while index < len(argv):
+        token = argv[index]
+        if token == "--":
+            die("usage: gantry wait [--run <id>] [--timeout-ms N] [--heartbeat-ms N] [--stall-ms N] [--dispatch <id>]")
+        if not token.startswith("-"):
+            die("usage: gantry wait [--run <id>] [--timeout-ms N] [--heartbeat-ms N] [--stall-ms N] [--dispatch <id>]")
+        name = option_name(token)
+        if name not in valued:
+            die("gantry wait accepts only --run, --timeout-ms, --heartbeat-ms, --stall-ms, and --dispatch")
+        if "=" in token and token.startswith("--"):
+            value = token.split("=", 1)[1]
+            index += 1
+        else:
+            if index + 1 >= len(argv):
+                die(f"{name} needs a value")
+            value = argv[index + 1]
+            index += 2
+        kind = valued[name]
+        if kind == "run":
+            run = value
+        elif kind == "dispatch":
+            if value:
+                dispatches.append(value)
+        elif kind == "timeout":
+            timeout_ms = parse_ms(value, name, WAIT_MAX_MS)
+        elif kind == "heartbeat":
+            heartbeat_ms = parse_ms(value, name)
+        else:
+            stall_ms = parse_ms(value, name)
+    return {
+        "run": run,
+        "timeout_ms": timeout_ms,
+        "heartbeat_ms": heartbeat_ms,
+        "stall_ms": stall_ms,
+        "dispatches": dispatches,
+    }
+
+
+def iso(moment):
+    return moment.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def parse_stamp(value):
+    if not isinstance(value, str) or not value.strip():
+        return None
+    text = value.strip()
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def stamp_age(value):
+    parsed = parse_stamp(value)
+    if parsed is None:
+        return None
+    return (wall_now() - parsed).total_seconds()
+
+
+def heartbeat_of(node):
+    found = ""
+
+    def walk(value):
+        nonlocal found
+        if found or not isinstance(value, dict):
+            return
+        stamp = value.get("lastHeartbeatAt")
+        if isinstance(stamp, str) and stamp.strip():
+            found = stamp.strip()
+            return
+        for child in value.values():
+            if isinstance(child, dict):
+                walk(child)
+
+    walk(node if isinstance(node, dict) else {})
+    return found
+
+
+def row_dispatch(row):
+    nested = row.get("dispatch") if isinstance(row.get("dispatch"), dict) else {}
+    return row.get("dispatchId") or nested.get("id") or ""
+
+
+def row_task(row):
+    nested = row.get("dispatch") if isinstance(row.get("dispatch"), dict) else {}
+    return row.get("taskId") or nested.get("taskId") or ""
+
+
+def row_status(row):
+    nested = row.get("dispatch") if isinstance(row.get("dispatch"), dict) else {}
+    return row.get("dispatchStatus") or nested.get("status") or ""
+
+
+def load_wait_state(run):
+    path = os.path.join(wait_dir(run), "wait.json")
+    empty = {"confirmed": {}, "reported": {}, "since": {}}
+    try:
+        data = json.load(open(path))
+    except (OSError, ValueError):
+        return empty
+    if not isinstance(data, dict):
+        return empty
+    for key in empty:
+        if not isinstance(data.get(key), dict):
+            data[key] = {}
+    return {"confirmed": data["confirmed"], "reported": data["reported"], "since": data["since"]}
+
+
+def save_wait_state(run, state):
+    path = os.path.join(wait_dir(run), "wait.json")
+    tmp = path + ".tmp"
+    with open(tmp, "w") as handle:
+        json.dump(state, handle, separators=(",", ":"))
+    os.replace(tmp, path)
+
+
+def read_journal(run):
+    path = os.path.join(wait_dir(run), "journal.jsonl")
+    rows = []
+    try:
+        handle = open(path)
+    except OSError:
+        return rows
+    with handle:
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(row, dict):
+                rows.append(row)
+    return rows
+
+
+def read_cursor(run):
+    path = os.path.join(wait_dir(run), "cursor")
+    try:
+        return max(0, int(open(path).read() or 0))
+    except (OSError, ValueError):
+        return 0
+
+
+def write_cursor(run, value):
+    path = os.path.join(wait_dir(run), "cursor")
+    tmp = path + ".tmp"
+    with open(tmp, "w") as handle:
+        handle.write(str(value))
+    os.replace(tmp, path)
+
+
+def payload_dict(message):
+    payload = message.get("payload")
+    if isinstance(payload, str) and payload:
+        try:
+            payload = json.loads(payload)
+        except ValueError:
+            payload = {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def note_heartbeat(confirmed, dispatch, stamp, live):
+    if not dispatch:
+        return
+    if live:
+        confirmed[dispatch] = iso(wall_now())
+        return
+    if not stamp:
+        return
+    incoming = parse_stamp(stamp)
+    current = parse_stamp(confirmed.get(dispatch))
+    if incoming is None:
+        if dispatch not in confirmed:
+            confirmed[dispatch] = stamp
+        return
+    if current is None or incoming >= current:
+        confirmed[dispatch] = stamp
+
+
+def event_status(kind, payload, subject):
+    if kind in ("pre-pr", "pre_pr", "prepr"):
+        return "pre-pr"
+    checkpoint = payload.get("checkpoint") or ""
+    if kind not in WAIT_QUIET and (checkpoint == "pre-pr" or str(subject or "").strip().lower() == "pre-pr"):
+        return "pre-pr"
+    return kind
+
+
+def message_fields(message):
+    from gantry_run import project_message, project_pr
+
+    projected = project_message(message)
+    payload = payload_dict(message)
+    kind = projected.get("type") or ""
+    status = event_status(kind, payload, projected.get("subject"))
+    files = payload.get("files") or ""
+    if isinstance(files, list):
+        files = ",".join(str(item) for item in files if item)
+    fields = {
+        "id": projected.get("id") or "",
+        "task": projected.get("task") or payload.get("taskId") or payload.get("task") or "",
+        "dispatch": projected.get("dispatch") or payload.get("dispatchId") or payload.get("dispatch") or "",
+        "subject": projected.get("subject") or "",
+        "body": projected.get("body") or "",
+        "phase": projected.get("phase") or "",
+        "outcome": projected.get("outcome") or payload.get("outcome") or "",
+        "options": projected.get("options") or "",
+        "intent": payload.get("intent") or "",
+        "files": files if isinstance(files, str) else "",
+    }
+    if status == "worker_done":
+        pr, branch, outcome = project_pr(message.get("body") or projected.get("body") or "")
+        if pr:
+            fields["pr"] = pr
+        if branch:
+            fields["branch"] = branch
+        if outcome and not fields["outcome"]:
+            fields["outcome"] = outcome
+    return status, fields
+
+
+def latest_types(messages):
+    found = {}
+    for message in messages:
+        status, fields = message_fields(message)
+        dispatch = fields.get("dispatch") or ""
+        if dispatch:
+            found[dispatch] = status or found.get(dispatch) or ""
+    return found
+
+
+def watched_dispatches(explicit, rows):
+    if explicit:
+        return list(explicit)
+    found = []
+    for row in rows:
+        if not isinstance(row, dict) or row_status(row) in SETTLED_STATUS:
+            continue
+        dispatch = row_dispatch(row)
+        if dispatch and dispatch not in found:
+            found.append(dispatch)
+    return found
+
+
+def remember_tasks(tasks, rows):
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        dispatch, task = row_dispatch(row), row_task(row)
+        if dispatch and task:
+            tasks[dispatch] = task
+
+
+def show_worker(dispatch):
+    result, _err = orca_call("orchestration", "worker-show", "--dispatch", dispatch)
+    if not isinstance(result, dict):
+        return {}
+    nested = result.get("dispatch") if isinstance(result.get("dispatch"), dict) else {}
+    task = nested.get("taskId") or result.get("taskId") or ""
+    status = nested.get("status") or result.get("status") or ""
+    return {"heartbeat": heartbeat_of(result), "task": task, "status": status}
+
+
+def read_worker(dispatch):
+    orca_call("orchestration", "worker-read", "--dispatch", dispatch, "--limit", "8")
+
+
+def heartbeat_reason(heartbeat_ms):
+    if heartbeat_ms % 1000 == 0:
+        return f"no heartbeat in {heartbeat_ms // 1000}s"
+    return f"no heartbeat in {heartbeat_ms}ms"
+
+
+def failure_for(run, state, dispatch, task, reason, read):
+    if read:
+        read_worker(dispatch)
+    state["reported"][dispatch] = reason
+    save_wait_state(run, state)
+    return emit(wait_payload("failure", reason, task=task, dispatch=dispatch, action="left running"))
+
+
+def cmd_wait(argv):
+    """Confirm first heartbeats, then block until the coordinator must act.
+
+    A missing first heartbeat, or a heartbeat that goes stale while the worker
+    is not blocked on a question, is a failure. The worker is left running.
+    Absence is not a retry and not a stop. One JSON line, then return.
+    """
+    opts = parse_wait_args(argv)
+    run, err = bound_run(opts["run"])
+    if not run:
+        return emit(wait_payload("failure", err or "this terminal has no bound run"), 1)
+    state = load_wait_state(run)
+    confirmed = state["confirmed"]
+    reported = state["reported"]
+    since = state["since"]
+    tasks = {}
+    heartbeat_s = opts["heartbeat_ms"] / 1000
+    stall_s = opts["stall_ms"] / 1000
+    timeout_s = opts["timeout_ms"] / 1000
+    started = monotonic_now()
+    last_daemon = started
+    start_mailbox(run)
+    while True:
+        if monotonic_now() - last_daemon >= 10:
+            start_mailbox(run)
+            last_daemon = monotonic_now()
+        journal = read_journal(run)
+        cursor = min(read_cursor(run), len(journal))
+        fresh = journal[cursor:]
+        consumed = cursor
+        actionable = {"question", "escalation", "worker_done", "pre-pr"}
+        for offset, message in enumerate(fresh):
+            status, fields = message_fields(message)
+            dispatch = fields.get("dispatch") or ""
+            if dispatch and fields.get("task"):
+                tasks[dispatch] = fields["task"]
+            if status == "heartbeat":
+                note_heartbeat(confirmed, dispatch, "", True)
+                consumed = cursor + offset + 1
+                continue
+            if status in WAIT_QUIET or status not in actionable:
+                consumed = cursor + offset + 1
+                continue
+            write_cursor(run, cursor + offset + 1)
+            save_wait_state(run, state)
+            return emit(wait_payload(status, **fields))
+        if consumed != cursor:
+            write_cursor(run, consumed)
+        rows, _list_err = paged("worker-list", run)
+        rows = rows or []
+        remember_tasks(tasks, rows)
+        watch = watched_dispatches(opts["dispatches"], rows)
+        kinds = latest_types(journal)
+        settled = set()
+        for dispatch in watch:
+            shown = show_worker(dispatch)
+            if shown.get("task"):
+                tasks[dispatch] = shown["task"]
+            if shown.get("status") in SETTLED_STATUS:
+                settled.add(dispatch)
+                continue
+            if shown.get("heartbeat"):
+                note_heartbeat(confirmed, dispatch, shown["heartbeat"], False)
+        watch = [dispatch for dispatch in watch if dispatch not in settled]
+        now = wall_now()
+        missing = []
+        for dispatch in watch:
+            if dispatch in reported or dispatch in confirmed:
+                continue
+            since.setdefault(dispatch, iso(now))
+            age = stamp_age(since[dispatch])
+            if age is not None and age >= heartbeat_s:
+                missing.append(dispatch)
+        if missing:
+            dispatch = sorted(missing)[0]
+            return failure_for(run, state, dispatch, tasks.get(dispatch, ""), heartbeat_reason(opts["heartbeat_ms"]), True)
+        for dispatch in sorted(watch):
+            if dispatch in reported or dispatch not in confirmed:
+                continue
+            if kinds.get(dispatch) in WAIT_BLOCKING or kinds.get(dispatch) == "worker_done":
+                continue
+            age = stamp_age(confirmed[dispatch])
+            if age is None or age < stall_s:
+                continue
+            return failure_for(run, state, dispatch, tasks.get(dispatch, ""), "stalled after heartbeat", False)
+        save_wait_state(run, state)
+        if monotonic_now() - started >= timeout_s:
+            write_cursor(run, len(journal))
+            return emit(wait_payload("timeout", "no message"))
+        pause(WAIT_POLL_S)
+
+
 def dispatch(argv):
     if argv[:1] == ["--version"]:
         print(VERSION)
@@ -2718,6 +3172,8 @@ def dispatch(argv):
         return cmd_charter(argv[1:])
     if command == "ship":
         return cmd_ship(argv[1:])
+    if command == "wait":
+        return cmd_wait(argv[1:])
     if command == "cleanup":
         return cmd_cleanup(argv[1:])
     if command == "restart":
