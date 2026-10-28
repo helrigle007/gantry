@@ -84,7 +84,7 @@ Each property is one sentence. The harm is what a user gets if it breaks. The gr
 | activation-registered | A registry entry for the origin applies the role rules. |
 | activation-closed | When the origin is registered and the role cannot be read, Agent and Task are denied and every other tool is checked as a worker. |
 | activation-fallback | A missing or unreadable registry governs the repo when `.git/gantry.json` exists, and leaves it dormant when that file is absent. |
-| worker-gantry | A worker cannot run `gantry` or `gantry_kit.py`. The coordinator may run `gantry overlap`, `gantry charter`, `gantry ship`, and `gantry cleanup`, and nothing else under `gantry`. `gantry ship` is denied while `autoMerge` is false and when the argv carries `--admin`, `--auto`, or `--force`. `gantry cleanup` is denied when the argv carries `--force`. |
+| worker-gantry | A worker cannot run `gantry` or `gantry_kit.py`. The coordinator may run `gantry overlap`, `gantry charter`, `gantry ship`, `gantry cleanup`, and `gantry wait`, and nothing else under `gantry`. `gantry ship` is denied while `autoMerge` is false and when the argv carries `--admin`, `--auto`, or `--force`. `gantry cleanup` is denied when the argv carries `--force`. |
 | worker-home-write | A worker is denied Edit, Write, MultiEdit, and NotebookEdit of `$HOME/.gantry` and every path under it, written absolute or with a leading `~`. Read and `cat` of those paths stay allowed. |
 | pre-pr | `gh pr create`, `gh pr new`, and a POST to `repos/<owner>/<repo>/pulls` are denied until the worker's pre-pr overlap check is cleared. The coordinator cannot open a PR. |
 

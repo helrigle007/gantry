@@ -254,7 +254,7 @@ def test_inflight_worker_and_open_gate_outrank_ready_tasks():
         os.environ.update(env)
         try:
             state, _handoff = run.refresh(repo)
-            assert state["next"] == "Workers in flight: ctx_live. Keep one mailbox wait running. Do not start a duplicate."
+            assert state["next"] == "Workers in flight: ctx_live. Keep one gantry wait running. Do not start a duplicate."
             assert state["workers"][0]["heartbeat"] == "2026-10-21T00:00:00Z"
             path = save_fixture(tmp, fixture(
                 [SETTLED, READY], [],

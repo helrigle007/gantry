@@ -53,8 +53,12 @@ def until(pred, timeout, step=3):
     return None
 
 
+def is_wait(command):
+    return "gantry wait" in command or "gantry-mailbox wait" in command
+
+
 def waits(ev):
-    return [e for e in ev if e[1] == "use" and e[2] == "Bash" and "gantry-mailbox wait" in e[3].get("command", "")]
+    return [e for e in ev if e[1] == "use" and e[2] == "Bash" and is_wait(e[3].get("command", ""))]
 
 
 def run(n):
@@ -63,7 +67,7 @@ def run(n):
                   "--command", f"gantry {json.dumps(OBJECTIVE)}")["terminal"]["handle"]
     path = until(lambda: find_transcript(start), 120)
     assert path, "coordinator transcript never appeared"
-    assert until(lambda: waits(events(path)), 400), "no gantry-mailbox wait started"
+    assert until(lambda: waits(events(path)), 400), "no gantry wait started"
     time.sleep(10)
     sent = datetime.now(timezone.utc)
     subprocess.run(["orca", "terminal", "send", "--terminal", handle, "--text", "PING: are you still receiving worker messages?", "--enter", "--json"],
@@ -74,7 +78,7 @@ def run(n):
     def settled():
         ev = events(path)
         rel = [i for i, e in enumerate(ev) if e[1] == "use" and "worker-release" in str(e[3])]
-        rewaits = [i for i, e in enumerate(ev) if e[1] == "use" and e[2] == "Bash" and "gantry-mailbox wait" in e[3].get("command", "")]
+        rewaits = [i for i, e in enumerate(ev) if e[1] == "use" and e[2] == "Bash" and is_wait(e[3].get("command", ""))]
         return (ev, rel, rewaits) if rel and any(a > rel[0] for a in rewaits) else None
 
     done = until(settled, 600)

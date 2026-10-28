@@ -150,7 +150,7 @@ These rules apply only when the current repo's origin is registered.
 | Rule | Who | How |
 | --- | --- | --- |
 | No file edits | coordinator | `tools:` allowlist, `disallowedTools`, and the guard's tool allowlist |
-| Bash limited to `orca` (never `orchestration check`), `gantry overlap`, `gantry charter`, `gantry ship`, `gantry cleanup`, `~/.gantry/current/kit/gantry-mailbox`, read-only `git`, `git fetch` from origin, a fast-forward of the default branch in a clean main checkout, and `gh pr view/checks/list` | coordinator | guard |
+| Bash limited to `orca` (never `orchestration check`), `gantry wait`, `gantry overlap`, `gantry charter`, `gantry ship`, `gantry cleanup`, read-only `git`, `git fetch` from origin, a fast-forward of the default branch in a clean main checkout, and `gh pr view/checks/list` | coordinator | guard |
 | No `gh pr merge`, no `git push`, no `git worktree remove`, and no opening a pull request. `gantry ship` is allowed only while `autoMerge` is true and the argv has no `--admin`, `--auto`, or `--force` | coordinator | guard |
 | No `gh pr create` until the pre-pr overlap check is cleared | workers | guard |
 | No merging | every worker except the `gantry-ship` task's, all workers when `autoMerge` is false | guard |
@@ -178,8 +178,7 @@ gantry install /path/to/repo
 
 Cut:
 
-- The coordinator's 180-second heartbeat confirmation. The race never reproduced in 8 starts, and Orca's own `ready` means input was accepted. Keep it until one more Orca release, then drop it.
-- `scripts/race-check.py`, once the race is retired upstream.
+- `scripts/race-check.py`, once the race is retired upstream. The 180-second heartbeat confirmation now runs inside `gantry wait`, with the mailbox wait. A missing or stalled heartbeat is reported and the worker is left running.
 
 Add:
 
@@ -188,11 +187,11 @@ Add:
 
 ## Layout
 
-- `bin/gantry` is the launcher. `gantry --version` prints `0.3.1`.
+- `bin/gantry` is the launcher. `gantry --version` prints `0.3.2`.
 - `template/kit/` is the source the launcher installs under `~/.gantry`.
 - `scripts/race-check.py <repo> [n] [timeout]` starts N new-child workers in parallel and times each first heartbeat. `scripts/ping-runs.py <repo> <n>` times coordinator responsiveness. `scripts/overlap_efficiency.py` compares overlap checks in coordinator transcripts. `scripts/ship_efficiency.py` compares the ship and cleanup span.
 - `evals/overlap/` is the duplicate-work measurement harness: golden cases, the correctness runner, and the transcript fixtures. `evals/ship/` is the same kind of harness for ship and cleanup. `evals/quiet/` checks the coordinator's one-line report against the charter and a sample transcript.
-- `tests/guard_test.py`, `tests/install_test.py`, `tests/update_test.py`, `tests/context_attribution_test.py`, `tests/reset_test.py`, `tests/overlap_test.py`, `tests/overlap_eval_test.py`, `tests/ship_eval_test.py`, `tests/ship_cmd_test.py`, `tests/registry_test.py`, `tests/charter_test.py`, and `tests/quiet_eval_test.py` are the regression suites.
+- `tests/guard_test.py`, `tests/install_test.py`, `tests/update_test.py`, `tests/context_attribution_test.py`, `tests/reset_test.py`, `tests/overlap_test.py`, `tests/overlap_eval_test.py`, `tests/ship_eval_test.py`, `tests/ship_cmd_test.py`, `tests/wait_test.py`, `tests/registry_test.py`, `tests/charter_test.py`, and `tests/quiet_eval_test.py` are the regression suites.
 - `docs/ground-truth.md` records what the installed tools actually do.
 
 ## License

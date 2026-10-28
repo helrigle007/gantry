@@ -38,6 +38,8 @@ def tool_result(tid, text):
 def test_bash_families_do_not_double_count_orca():
     families = ca.bash_families("orca orchestration worker-read --dispatch ctx_1 --limit 40")
     assert families == ["worker-read"], families
+    assert ca.bash_families("gantry wait --run run_1") == ["gantry wait"]
+    assert ca.bash_families("~/.gantry/current/kit/gantry-mailbox wait --timeout-ms 180000") == ["gantry-mailbox wait"]
     assert ca.bash_families("orca status --json") == ["orca other"]
     assert "briefs/specs" in ca.bash_families("orca orchestration task-create --spec 'Playbook: feature'")
 

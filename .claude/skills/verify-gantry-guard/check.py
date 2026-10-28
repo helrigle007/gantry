@@ -128,8 +128,8 @@ PROPS = {
         "A corrupt registry would police a repo with no config, or would ignore a repo that has one.",
     ),
     "worker-gantry": (
-        "A worker cannot run gantry or gantry_kit.py. The coordinator may run gantry overlap, gantry charter, gantry ship, and gantry cleanup, and nothing else under gantry. gantry ship is denied while autoMerge is false and when the argv carries --admin, --auto, or --force. gantry cleanup is denied when the argv carries --force.",
-        "A worker would uninstall the kit, record an overlap verdict, rewrite the user's charter, or merge through gantry ship.",
+        "A worker cannot run gantry or gantry_kit.py. The coordinator may run gantry overlap, gantry charter, gantry ship, gantry cleanup, and gantry wait, and nothing else under gantry. gantry ship is denied while autoMerge is false and when the argv carries --admin, --auto, or --force. gantry cleanup is denied when the argv carries --force.",
+        "A worker would uninstall the kit, record an overlap verdict, rewrite the user's charter, merge through gantry ship, or wait on workers through gantry wait.",
     ),
     "worker-home-write": (
         "A worker is denied Edit, Write, MultiEdit, and NotebookEdit of $HOME/.gantry and every path under it, written absolute or with a leading ~. Read and cat of those paths stay allowed.",
@@ -334,13 +334,13 @@ MUTATIONS = {
     "worker-gantry": (
         ["worker-gantry"],
         [(
-            "def check_gantry(ctx, args):\n    need(ctx.role == \"coordinator\" and coord_gantry(args), \"only the coordinator runs gantry, and only gantry overlap, gantry charter, gantry ship, or gantry cleanup\")\n",
+            "def check_gantry(ctx, args):\n    need(ctx.role == \"coordinator\" and coord_gantry(args), \"only the coordinator runs gantry, and only gantry overlap, gantry charter, gantry ship, gantry cleanup, or gantry wait\")\n",
             "def check_gantry(ctx, args):\n    return\n",
         )],
     ),
     "coord-charter": (
         ["worker-gantry"],
-        [('COORD_GANTRY = ("overlap", "charter", "ship", "cleanup")', 'COORD_GANTRY = ("overlap", "ship", "cleanup")')],
+        [('COORD_GANTRY = ("overlap", "charter", "ship", "cleanup", "wait")', 'COORD_GANTRY = ("overlap", "ship", "cleanup", "wait")')],
     ),
     "worker-home-write": (
         ["worker-home-write"],
@@ -1213,6 +1213,11 @@ def gantry_checks(guard, paths):
         ("coord-cleanup-scan", "coord", "gantry cleanup --scan", True),
         ("coord-cleanup-dry", "coord", "gantry cleanup --dry-run task_impl", True),
         ("coord-cleanup-finished", "coord", "gantry cleanup --finished", True),
+        ("worker-wait", "worker", "gantry wait", False),
+        ("worker-wait-run", "worker", "gantry wait --run run_1", False),
+        ("ship-wait", "ship", "gantry wait", False),
+        ("coord-wait", "coord", "gantry wait", True),
+        ("coord-wait-run", "coord", "gantry wait --run run_1 --dispatch ctx_a", True),
         ("coord-kit-cleanup", "coord", "python3 /opt/gantry_kit.py cleanup task_impl", True),
     ]
     for where, role, command, allow in rows:

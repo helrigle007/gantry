@@ -782,7 +782,7 @@ ORCA_ALLOW = {
 }
 ORCA_DENY = {
     "worker": "workers talk only to the coordinator (orca orchestration send|ask|check); fan out with Claude Code subagents, never Orca Runs/workers",
-    "coordinator": "coordinator may use orca status, skills, orchestration (not reset or check: wait with gantry-mailbox), worktree list|show|ps, terminal list|show|read|wait, and terminal send --terminal <handle> only to a worker of this run",
+    "coordinator": "coordinator may use orca status, skills, orchestration (not reset or check: wait with gantry wait), worktree list|show|ps, terminal list|show|read|wait, and terminal send --terminal <handle> only to a worker of this run",
 }
 
 def run_terminal_worker(run_id, handle):
@@ -846,7 +846,7 @@ def deny_source(_ctx, _args):
     deny("source and . run a file the guard does not read; run the commands directly")
 
 
-COORD_GANTRY = ("overlap", "charter", "ship", "cleanup")
+COORD_GANTRY = ("overlap", "charter", "ship", "cleanup", "wait")
 
 def coord_gantry(args):
     return bool(args) and args[0] in COORD_GANTRY
@@ -860,7 +860,7 @@ def gantry_blocked_flag(token):
     return name.startswith("-") and not name.startswith("--") and "f" in name[1:]
 
 def check_gantry(ctx, args):
-    need(ctx.role == "coordinator" and coord_gantry(args), "only the coordinator runs gantry, and only gantry overlap, gantry charter, gantry ship, or gantry cleanup")
+    need(ctx.role == "coordinator" and coord_gantry(args), "only the coordinator runs gantry, and only gantry overlap, gantry charter, gantry ship, gantry cleanup, or gantry wait")
     if args and args[0] in ("ship", "cleanup"):
         need(not any(gantry_blocked_flag(token) for token in args[1:]), "gantry ship and gantry cleanup reject --admin, --auto, and --force")
         if args[0] == "ship":

@@ -216,7 +216,7 @@ def next_step(state):
         gate = gates[0]
         return (
             f"Open gate {gate['id']} on {gate['task']}: {gate['question']}. "
-            "Keep one mailbox wait running and do not start a duplicate worker."
+            "Keep one gantry wait running and do not start a duplicate worker."
         )
     held = held_landing(state)
     if held:
@@ -227,7 +227,7 @@ def next_step(state):
     active = [worker for worker in state["workers"] if worker["status"] not in SETTLED]
     if active:
         ids = ", ".join(worker["dispatch"] for worker in active)
-        return f"Workers in flight: {ids}. Keep one mailbox wait running. Do not start a duplicate."
+        return f"Workers in flight: {ids}. Keep one gantry wait running. Do not start a duplicate."
     ready = ready_tasks(state)
     if ready:
         ids = ", ".join(task["id"] for task in ready)

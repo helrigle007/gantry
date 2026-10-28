@@ -28,6 +28,7 @@ COMPACT_DROP = 20000
 CHARS_PER_TOKEN = 4
 
 FAMILIES = (
+    "gantry wait",
     "gantry-mailbox wait",
     "worker-read",
     "worker-show",
@@ -58,6 +59,7 @@ FAMILIES = (
 )
 
 FAMILY_RULES = (
+    ("gantry wait", re.compile(r"(?:^|[\s;|&`(])(?:\S*/)?gantry(?:_kit\.py)? wait\b")),
     ("gantry-mailbox wait", re.compile(r"gantry-mailbox\b.*\bwait\b|\bwait\b.*gantry-mailbox")),
     ("worker-read", re.compile(r"\bworker-read\b")),
     ("worker-show", re.compile(r"\bworker-show\b")),
