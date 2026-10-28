@@ -29,5 +29,6 @@ jobs:
           python3 tests/ship_cmd_test.py
           python3 tests/registry_test.py
           python3 tests/charter_test.py
+          python3 tests/quiet_eval_test.py
       - name: guard model
         run: python3 -B .claude/skills/verify-gantry-guard/check.py

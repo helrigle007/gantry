@@ -1,0 +1,65 @@
+{
+  "formats": [
+    "▸ started <task-slug> · <n> worker(s) · overlap clear",
+    "▸ PR #N opened · overlap clear · checks running",
+    "✓ landed #N · squash-merged · cleaned up",
+    "! blocked #N · <short reason> · <what happens next>",
+    "? <question>"
+  ],
+  "forbids": [
+    "No plan recap",
+    "nothing needs your input",
+    "Do not narrate heartbeats",
+    "gate listings",
+    "Worker confirmed (heartbeat)",
+    "Main current. Starting worker.",
+    "Listing decision gates",
+    "Before the PR",
+    "One background mailbox wait per expected event",
+    "Do not start a second wait for heartbeats"
+  ],
+  "absent": [
+    "Report tersely",
+    "report that preview to the user"
+  ],
+  "ship_formats": [
+    "✓ landed #N · squash-merged · cleaned up",
+    "! blocked #N · <short reason> · <what happens next>",
+    "? <question>"
+  ],
+  "ship_absent": [
+    "Show that list"
+  ],
+  "keeps": [
+    "AskUserQuestion",
+    "--answer proceed",
+    "--answer hold",
+    "proceed without asking",
+    "Do not retry or stop",
+    "gh pr create",
+    "gate-list",
+    "--timeout-ms 180000",
+    "just clean up",
+    "gantry ship",
+    "gantry cleanup"
+  ],
+  "narration": [
+    "Fetching main",
+    "Main current",
+    "Before the PR",
+    "After the PR",
+    "Worker confirmed (heartbeat)",
+    "Nothing needs your input",
+    "Listing decision gates",
+    "no saved rules"
+  ],
+  "after": [
+    "▸ started slug-helper · 1 worker · overlap clear",
+    "▸ PR #6 opened · overlap clear · checks running",
+    "✓ landed #6 · squash-merged · cleaned up",
+    "? #7 overlaps https://github.com/example-org/example-repo/pull/3 (related, src/app.py).",
+    "  1. Proceed",
+    "  2. Hold",
+    "! blocked #8 · test failing (tests/test_app.py) · worker fixing"
+  ]
+}

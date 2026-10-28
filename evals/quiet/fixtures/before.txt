@@ -1,0 +1,9 @@
+Scoped overlap check: continue. Fetching main before starting worker.
+Main current. Starting worker.
+I've started one worker to add src/slug_helper.py and its test. The duplicate-work check found no overlap. I'm waiting in the background for the worker's first check-in.
+Before the PR: the worker asks before gh pr create. I run the second duplicate-work check at that point.
+After the PR: once checks are green I'll merge it, then clean up.
+There are no saved rules for this repo or globally, so the worker's instructions have none.
+Worker confirmed (heartbeat). Waiting for next messages.
+The worker checked in and is working on the slug task. Nothing needs your input.
+Listing decision gates for the run.
