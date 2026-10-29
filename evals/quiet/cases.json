@@ -4,17 +4,13 @@
     "▸ PR #N opened · overlap clear · checks running",
     "✓ landed #N · squash-merged · cleaned up",
     "! blocked #N · <short reason> · <what happens next>",
+    "! pstack <installed> newer than tested 0.15.36 · continuing",
     "? <question>"
   ],
   "forbids": [
     "No plan recap",
-    "nothing needs your input",
-    "Do not narrate heartbeats",
-    "gate listings",
-    "Worker confirmed (heartbeat)",
-    "Main current. Starting worker.",
-    "Listing decision gates",
-    "Before the PR",
+    "Any other user-visible text is forbidden",
+    "restating the goal on the first message",
     "One background `gantry wait` per expected event",
     "Do not wait on heartbeats yourself"
   ],
@@ -54,7 +50,10 @@
     "Worker confirmed (heartbeat)",
     "Nothing needs your input",
     "Listing decision gates",
-    "no saved rules"
+    "no saved rules",
+    "Worker's branch is pushed. Duplicate-work check passed, so I told it to open the PR. Waiting on that now.",
+    "The worker is building the change now. Next update is when the PR opens.",
+    "The duplicate-work check passed, so the worker is opening the PR now."
   ],
   "after": [
     "▸ started slug-helper · 1 worker · overlap clear",

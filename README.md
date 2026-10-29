@@ -1,6 +1,6 @@
 # Gantry
 
-Gantry turns Claude Code inside Orca into a coordinator-plus-workers setup. One coordinator agent plans and dispatches but never writes code. Each worker is a Claude Code session in its own Orca worktree. The coordinator names one playbook and the few pstack skills that task needs. pstack's Opening a PR, Babysit, and Shipping playbooks own PRs and merging.
+Gantry turns Claude Code inside Orca into a coordinator-plus-workers setup. One coordinator agent plans and dispatches but never writes code. Each worker is a Claude Code session in its own Orca worktree. The coordinator is the `/pstack:poteto-mode` chat. Poteto-mode matches the playbook and the skills. Each poteto-agent spawn is an Orca worker. pstack's Opening a PR, Babysit, and Shipping playbooks still own PRs and merging, and `gantry ship` lands an independent PR.
 
 Every Gantry session runs with permissions bypassed. Nothing depends on a permission prompt. The rules hold through tool removal, a user-level PreToolUse hook, and a git `pre-push` hook. The hook is dormant until the repo is registered.
 
@@ -96,7 +96,7 @@ Type the objective at the coordinator's prompt, or pass it on the command line:
 gantry "Add a slugify helper and a word-count helper, then a CLI that exposes slugify"
 ```
 
-The coordinator answers a read-only request, such as a question about the repo, its history, or its PRs, directly in its terminal without creating a Run. It asks questions only when the objective is ambiguous. Otherwise it creates an Orca Run, splits the objective into tasks with dependencies, and starts the independent workers in parallel. Each task spec names one playbook and the skills that task needs, including the pre-PR skills the coordinator chose for that task, and carries the Gantry worker rules. It starts with `/poteto-mode` only when the coordinator assigns a lead worker to a large or open-ended task.
+The coordinator answers a read-only request, such as a question about the repo, its history, or its PRs, directly in its terminal without creating a Run. It asks questions only when the objective is ambiguous. Otherwise it reads the installed poteto-mode skill and then `~/.gantry/current/kit/gantry-poteto.md`. That file is last, and its Say rule replaces poteto-mode's reply rules for user-visible text. It creates an Orca Run and follows the playbook poteto-mode matched. Where that playbook would spawn a poteto-agent, Gantry starts an Orca worker and waits with `gantry wait`. The worker is briefed as a poteto-agent. It reads poteto-mode's `SKILL.md` by absolute path and does not run the playbook. Every brief still carries the charter, ownership, base, and proof. If pstack is not installed, the coordinator prints one blocked line and does not start a Run. This release was tested against pstack 0.15.36. A newer installed copy prints one warning line and continues. An equal or older copy prints nothing.
 
 Before the first worker, and again before the ship worker opens a pull request, the coordinator runs the duplicate-work check above.
 
@@ -187,11 +187,11 @@ Add:
 
 ## Layout
 
-- `bin/gantry` is the launcher. `gantry --version` prints `0.3.2`.
-- `template/kit/` is the source the launcher installs under `~/.gantry`.
+- `bin/gantry` is the launcher. `gantry --version` prints `0.4.0`.
+- `template/kit/` is the source the launcher installs under `~/.gantry`. `gantry-poteto.md` maps poteto-mode spawns onto Orca workers. It does not copy pstack into the repo.
 - `scripts/race-check.py <repo> [n] [timeout]` starts N new-child workers in parallel and times each first heartbeat. `scripts/ping-runs.py <repo> <n>` times coordinator responsiveness. `scripts/overlap_efficiency.py` compares overlap checks in coordinator transcripts. `scripts/ship_efficiency.py` compares the ship and cleanup span.
 - `evals/overlap/` is the duplicate-work measurement harness: golden cases, the correctness runner, and the transcript fixtures. `evals/ship/` is the same kind of harness for ship and cleanup. `evals/quiet/` checks the coordinator's one-line report against the charter and a sample transcript.
-- `tests/guard_test.py`, `tests/install_test.py`, `tests/update_test.py`, `tests/context_attribution_test.py`, `tests/reset_test.py`, `tests/overlap_test.py`, `tests/overlap_eval_test.py`, `tests/ship_eval_test.py`, `tests/ship_cmd_test.py`, `tests/wait_test.py`, `tests/registry_test.py`, `tests/charter_test.py`, and `tests/quiet_eval_test.py` are the regression suites.
+- `tests/guard_test.py`, `tests/install_test.py`, `tests/update_test.py`, `tests/context_attribution_test.py`, `tests/reset_test.py`, `tests/overlap_test.py`, `tests/overlap_eval_test.py`, `tests/ship_eval_test.py`, `tests/ship_cmd_test.py`, `tests/wait_test.py`, `tests/registry_test.py`, `tests/charter_test.py`, `tests/quiet_eval_test.py`, and `tests/poteto_test.py` are the regression suites.
 - `docs/ground-truth.md` records what the installed tools actually do.
 
 ## License

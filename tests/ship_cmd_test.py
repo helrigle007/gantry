@@ -34,10 +34,10 @@ def run_git(*args, check=True):
 
 class World:
     def __init__(self, tmp):
-        self.tmp = tmp
-        self.repo = os.path.join(tmp, "repo")
-        self.bare = os.path.join(tmp, "bare.git")
-        self.wt = os.path.join(tmp, "wt-slug")
+        self.tmp = os.path.realpath(tmp)
+        self.repo = os.path.join(self.tmp, "repo")
+        self.bare = os.path.join(self.tmp, "bare.git")
+        self.wt = os.path.join(self.tmp, "wt-slug")
         self.view = {
             "number": 9,
             "state": "OPEN",
@@ -62,6 +62,7 @@ class World:
         self.merge_code = 0
         self.workers = []
         self.fail_update = False
+        self.task_update_argv = None
         self.close_code = 0
         self.trace = []
         self.git_calls = []
@@ -201,6 +202,7 @@ class World:
     def orca(self, argv):
         if argv[1:3] == ["orchestration", "task-update"]:
             self.trace.append("task-update")
+            self.task_update_argv = list(argv)
             if self.fail_update:
                 return 0, json.dumps({"ok": False, "error": "task-update failed"}), ""
             return 0, json.dumps({"ok": True, "result": {}}), ""
@@ -282,6 +284,14 @@ def world():
     return tmp, World(tmp.name)
 
 
+def assert_task_update(fx, task):
+    argv = fx.task_update_argv
+    assert argv is not None, fx.trace
+    assert argv[argv.index("--id") + 1] == task
+    assert "--task" not in argv
+    assert argv[argv.index("--status") + 1] == "completed"
+
+
 def test_ship_lands_a_green_owned_pr():
     tmp, fx = world()
     try:
@@ -294,11 +304,29 @@ def test_ship_lands_a_green_owned_pr():
         assert fx.trace[:3] == ["view", "list-open", "merge"]
         assert "delete" in fx.trace and fx.trace.index("merge") < fx.trace.index("delete")
         assert "task-update" in fx.trace
+        assert_task_update(fx, "task_slug")
         assert fx.trace.count("merge") == 1
         recorded = [argv for argv in fx.git_calls if "push" in argv]
         assert recorded == [["git", "-C", fx.repo, "push", "origin", "--delete", "feat/slug"]]
         assert not fx.ref_exists("feat/slug")
         assert fx.ref_exists("main")
+    finally:
+        tmp.cleanup()
+
+
+def test_ship_stays_landed_when_task_update_fails():
+    tmp, fx = world()
+    try:
+        fx.fail_update = True
+        code, line, _err = fx.ship(["9", "--task", "task_slug", "--run", "run_1"])
+        assert code == 0, line
+        assert line["status"] == "landed"
+        assert line["deleted"] is True
+        assert "squash-merged" in line["reason"]
+        assert "task-update warning" in line["reason"]
+        assert "task-update failed" in line["reason"]
+        assert_task_update(fx, "task_slug")
+        assert not fx.ref_exists("feat/slug")
     finally:
         tmp.cleanup()
 
@@ -495,6 +523,7 @@ def test_cleanup_removes_a_merged_worktree_and_updates_state():
         assert not os.path.exists(fx.wt)
         assert os.path.isdir(fx.repo)
         assert "task-update" in fx.trace and "release" in fx.trace
+        assert_task_update(fx, "task_slug")
         removes = [argv for argv in fx.git_calls if "worktree" in argv and "remove" in argv]
         assert removes == [["git", "-C", fx.repo, "worktree", "remove", fx.wt]]
         assert "--force" not in removes[0] and "-f" not in removes[0]
@@ -821,8 +850,70 @@ def test_ship_merge_argv_is_squash_at_the_verified_head():
         tmp.cleanup()
 
 
+def test_worker_path_reads_a_name_directory_and_a_nested_id():
+    tmp, fx = world()
+    saved_home = os.environ.get("HOME")
+    try:
+        home = os.path.join(fx.tmp, "home")
+        os.environ["HOME"] = home
+        name = "add-hello"
+        named = os.path.join(home, "orca", "workspaces", os.path.basename(fx.repo), name)
+        os.makedirs(named)
+        assert kit.worker_path({"resource": {"name": name}}, fx.repo) == os.path.realpath(named)
+        assert kit.worker_path({"taskId": "task_slug"}, fx.repo) == ""
+        via_id = kit.worker_path({"resource": {"worktreeId": "repo-1::" + fx.wt}}, fx.repo)
+        assert via_id == os.path.realpath(fx.wt)
+    finally:
+        if saved_home is None:
+            os.environ.pop("HOME", None)
+        else:
+            os.environ["HOME"] = saved_home
+        tmp.cleanup()
+
+
+def test_cleanup_removes_the_linked_worktree_when_the_row_has_no_path():
+    tmp, fx = world()
+    try:
+        fx.merged_heads.add("feat/slug")
+        fx.workers = [{
+            "taskId": "task_slug",
+            "dispatchStatus": "completed",
+            "agentTerminalHandle": "term_impl",
+            "dispatchId": "ctx_impl",
+        }]
+        code, lines, _err = fx.cleanup(["task_slug", "--run", "run_1"])
+        assert code == 0, lines
+        assert lines[0]["status"] == "removed", lines
+        assert lines[0]["removed"] == os.path.realpath(fx.wt)
+        assert not os.path.exists(fx.wt)
+    finally:
+        tmp.cleanup()
+
+
+def test_cleanup_does_not_report_removed_without_a_worktree():
+    tmp, fx = world()
+    try:
+        git(fx.repo, "worktree", "remove", fx.wt)
+        fx.workers = [{
+            "taskId": "task_slug",
+            "dispatchStatus": "completed",
+            "agentTerminalHandle": "term_impl",
+            "dispatchId": "ctx_impl",
+        }]
+        code, lines, _err = fx.cleanup(["task_slug", "--run", "run_1"])
+        assert code == 0, lines
+        assert lines[0]["status"] == "closed", lines
+        assert lines[0]["removed"] == ""
+        assert lines[0]["reason"] == "no worktree record"
+        assert lines[0]["closed"] == ["term_impl"]
+        assert lines[0]["path"] == ""
+    finally:
+        tmp.cleanup()
+
+
 if __name__ == "__main__":
     test_ship_lands_a_green_owned_pr()
+    test_ship_stays_landed_when_task_update_fails()
     test_ship_blocks_when_checks_are_not_green()
     test_ship_holds_when_automerge_is_false()
     test_ship_reports_a_stack_and_does_not_merge()
@@ -843,4 +934,7 @@ if __name__ == "__main__":
     test_cleanup_finished_removes_and_a_close_error_still_updates_state()
     test_cleanup_retries_state_when_the_worktree_is_already_gone()
     test_cleanup_skips_its_own_terminal_and_still_removes()
-    print("21/21 passed")
+    test_worker_path_reads_a_name_directory_and_a_nested_id()
+    test_cleanup_removes_the_linked_worktree_when_the_row_has_no_path()
+    test_cleanup_does_not_report_removed_without_a_worktree()
+    print("25/25 passed")

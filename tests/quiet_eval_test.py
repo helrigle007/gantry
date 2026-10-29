@@ -20,7 +20,7 @@ def test_charter_and_sample_match():
     assert score.lines_of(score.AFTER) == cases["after"]
     text = open(COORDINATOR).read()
     say = score.say_section(text)
-    assert "Do not narrate heartbeats" in say
+    assert "Any other user-visible text is forbidden" in say
     assert "No plan recap" in say
     for line in cases["formats"]:
         assert line in say

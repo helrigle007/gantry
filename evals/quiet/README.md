@@ -9,10 +9,13 @@ A line is one of:
 ▸ PR #N opened · overlap clear · checks running
 ✓ landed #N · squash-merged · cleaned up
 ! blocked #N · <short reason> · <what happens next>
+! pstack <installed> newer than tested 0.15.36 · continuing
 ? <question>
 ```
 
-`<n> worker(s)` is `1 worker` or `2 workers` in a real line. A question is followed by numbered options indented two spaces. A landed line may have one indented detail line. The Say section forbids a plan recap and narration of heartbeats, waits, fetches, and gate listings.
+The pstack line is printed once when the installed plugin is newer than the version this release tested, then the run continues. An equal or older version prints nothing.
+
+`<n> worker(s)` is `1 worker` or `2 workers` in a real line. A question is followed by numbered options indented two spaces. A landed line may have one indented detail line. The Say section replaces poteto-mode's reply rules. Any user-visible text that is not a Say line is forbidden, including a restated goal and a status update. The before transcript still shows those older sentences.
 
 ## Correctness
 

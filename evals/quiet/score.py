@@ -29,6 +29,7 @@ STARTED = re.compile(rf"^▸ started {SLUG} · {NUM} workers? · overlap clear$"
 OPENED = re.compile(rf"^▸ PR #{NUM} opened · overlap clear · checks running$")
 LANDED = re.compile(rf"^✓ landed #{NUM} · squash-merged · (?:cleaned up|left in place)$")
 BLOCKED = re.compile(rf"^! blocked (?:#{NUM}|{SLUG}) · {FIELD} · {FIELD}$")
+PSTACK_NEWER = re.compile(r"^! pstack v?\d+(?:\.\d+)* newer than tested v?\d+(?:\.\d+)* · continuing$")
 QUESTION = re.compile(r"^\? \S")
 OPTION = re.compile(r"^  [1-9]\d*\. \S")
 
@@ -57,7 +58,10 @@ def lines_of(path):
 
 
 def event(line):
-    return bool(STARTED.match(line) or OPENED.match(line) or LANDED.match(line) or BLOCKED.match(line) or QUESTION.match(line))
+    return bool(
+        STARTED.match(line) or OPENED.match(line) or LANDED.match(line)
+        or BLOCKED.match(line) or PSTACK_NEWER.match(line) or QUESTION.match(line)
+    )
 
 
 def quiet_errors(lines):

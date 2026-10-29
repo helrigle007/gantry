@@ -39,7 +39,7 @@ Measured on this machine:
 - The injected prompt is the Orca preamble first, then the task spec under `=== TASK ===`. A spec that starts with `/poteto-mode` does not reach the TUI as a slash command. Source: `dispatch --dry-run --return-preamble`.
 - The preamble says "Don't post to Slack, GitHub, or other channels during the run." gantry's worker rules override this for the PR, which is the task's deliverable.
 - The preamble sets the heartbeat cadence at every 5 minutes and uses the bare `orca` executable.
-- New-child worktrees land under `~/orca/workspaces/<repo>/<name>`.
+- New-child worktrees land under `~/orca/workspaces/<repo>/<name>`. `<repo>` is the main checkout's directory name. `<name>` is the `worker-start --name` value. A current `worker-list` row for that start can omit `worktreePath`. The path may instead be a nested workspace or resource field, including `resource.worktreeId` shaped `<id>::<path>`, or only the name. `git worktree list` from the main checkout still lists the linked worktree. Cleanup resolves a path field first (top-level or nested), then `~/orca/workspaces/<repo>/<name>` when the row carries that name, then `git worktree list` matched to the task branch. `cleaned up` is printed only when that removal happened.
 - A decision gate moves its Task to `blocked`. `gate-resolve` moves it to `ready` and sends no inbox message. The coordinator must poll `gate-list`.
 - Worktree placement: `current` reuses the coordinator's worktree. `new-child` creates a stacked child worktree and accepts `--base-branch`.
 - Role signal for the guard: Orca launches each worker in its own terminal with `ORCA_TERMINAL_HANDLE=term_...` in its env. Claude Code runs the PreToolUse hook as a child of the `claude` process, so the hook inherits the handle and a Bash call cannot change it. Every Orca terminal has a handle, including the operator's own chat, so the handle alone does not mark a worker. A worker is a terminal whose handle is some row's `agentTerminalHandle` in `worker-list --json`. Rows carry `agentTerminalHandle`, `taskId`, `runId`, `terminalState`, and `dispatchStatus`. `task-list --run <runId> --json` rows carry `id` and `task_title`. Without `--run`, `worker-list` covers the calling terminal's bound Run, or every Run when it has none. Worker terminals have no bound Run (`run-current --from <worker handle>` returns `run: null`), so the lookup sees every Run, newest first, paged at 100. A `new-child` worker reads `terminalState: retained`, `retainedReason: user_takeover` while it still runs (recorded 2026-09-27), so the guard ignores terminal state. The coordinator sets `--task-title gantry-ship` on ship and landing tasks and `gantry-cleanup` on cleanup tasks. Workers cannot set titles, because the guard limits them to `orchestration send|ask|check`.
@@ -82,6 +82,8 @@ Skill loading: pstack is a user-scope plugin, so its skills load as `pstack:<nam
 Branch protection and rulesets on a private repo on the free plan return HTTP 403 "Upgrade to GitHub Pro or make this repository public to enable this feature." No server-side rule can protect `main` there. gantry enforces the limits with the Claude guard hook plus a git `pre-push` hook.
 
 ## pstack 0.9.45
+
+Gantry 0.4.0 does not vendor pstack. The coordinator reads the newest installed copy, usually `~/.claude/plugins/cache/cursor-plugins/pstack/<version>/`, via `template/kit/gantry-poteto.md`. The notes below are a record of the 0.9.45 measurement.
 
 Path: `~/.claude/plugins/cache/pstack-claude/pstack/0.9.45/skills/poteto-mode/`.
 
