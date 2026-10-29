@@ -21,11 +21,11 @@ Speak only when the state the user cares about changes. One line per event. The 
 ? <question>
 ```
 
-`<n> worker(s)` is `1 worker` or `2 workers`. Do not print the parentheses. One started line per task. `#N` is the pull request number. On the blocked line, when no pull request exists yet, use the task slug instead of `#N`. A question is followed only by its options, numbered, each indented two spaces (`1. Proceed`). Ask it with AskUserQuestion.
+`<n> worker(s)` is `1 worker` or `2 workers`. Do not print the parentheses. One started line per task, printed once, only after that task's `worker-start` returns ok. A failed start is not a started line. Do not print the started line again when the same task starts successfully. `#N` is the pull request number. On the blocked line, when no pull request exists yet, use the task slug instead of `#N`. A question is followed only by its options, numbered, each indented two spaces (`1. Proceed`). Ask it with AskUserQuestion.
 
 `✓ landed #N · squash-merged · cleaned up` is the whole report when the pull request is squash-merged and cleanup for that task has finished. When this procedure lands it and does not clean up, print `✓ landed #N · squash-merged · left in place`. Add one short detail line under a landed line, indented two spaces, only when something unexpected happened.
 
-No plan recap. Do not restate these instructions, read a brief back, or say what happens before or after the pull request. Do not say that nothing needs your input. Do not narrate heartbeats, waits, fetches, fast-forwards, gate listings, or a procedure you are reading. Do not print `Worker confirmed (heartbeat)`, `Main current. Starting worker.`, `Listing decision gates`, or `Before the PR`. Silent internal steps stay silent. A timeout, an empty gate list, a charter with no rules, and a command you are about to run are not events. Questions and failures are always shown.
+No plan recap. Do not restate these instructions, read a brief back, or say what happens before or after the pull request. Do not say that nothing needs your input. Do not narrate heartbeats, waits, fetches, fast-forwards, gate listings, a pre-pr overlap check that continued, or a procedure you are reading. Do not print `Worker confirmed (heartbeat)`, `Main current. Starting worker.`, `Listing decision gates`, `Before the PR`, or `Worker's branch is pushed. Duplicate-work check passed, so I told it to open the PR. Waiting on that now.` Silent internal steps stay silent. A timeout, an empty gate list, a charter with no rules, and a command you are about to run are not events. Questions and failures are always shown.
 
 A trivial read-only answer is the answer, with no preamble. Saving or removing a charter rule is the one line the command printed.
 
@@ -61,7 +61,7 @@ Run this once per checkpoint:
 
 It labels each candidate and prints a top-level `verdict` of `continue` or `stop`. It records that classification. It drops this task's own pushed branch, active worker, and open pull request when `--task` matches that task. It only sees work pushed to GitHub, not unpushed local branches. Never decide overlap by inspecting PRs or branches yourself instead of running the command. Never rerun it for the same checkpoint unless the intent or the files changed.
 
-On `continue`, proceed without asking and print nothing about the check. On `stop`, ask the user with AskUserQuestion. The text is the question line from Say: one line naming each duplicate or related candidate with its link and its label, then `1. Proceed` and `2. Hold`. Then record the answer for either choice: `gantry overlap --record answered --checkpoint <same> --run <run> --task <task> --answer proceed` or `--answer hold`. On `hold`, print `! blocked <task-slug> · overlap hold · not starting` and do not start the worker. On `proceed`, the started line says `overlap clear`. A worker's `gh pr create` stays denied until the pre-pr verdict is `continue`, or the user answers `proceed`.
+On `continue`, proceed without asking and print nothing about the check. That includes a pre-pr checkpoint: do not narrate the push, the passed check, the instruction to open the pull request, or the wait. On `stop`, ask the user with AskUserQuestion. The text is the question line from Say: one line naming each duplicate or related candidate with its link and its label, then `1. Proceed` and `2. Hold`. Then record the answer for either choice: `gantry overlap --record answered --checkpoint <same> --run <run> --task <task> --answer proceed` or `--answer hold`. On `hold`, print `! blocked <task-slug> · overlap hold · not starting` and do not start the worker. On `proceed`, the started line says `overlap clear`. A worker's `gh pr create` stays denied until the pre-pr verdict is `continue`, or the user answers `proceed`.
 
 ## Decompose
 
@@ -75,24 +75,26 @@ Poteto-mode already matched the playbook and the skills. You do not classify eit
 
 Every spec has a Charter line, including a ship or landing spec. Under it, copy each charter rule that applies, unchanged, one `- <id> <exact words>` line per rule. A rule applies when it is a global rule or a rule for this repo, so copy every rule in the gantry charter block. Do not drop a rule because it looks unrelated to the task. Write `Charter: none` only when the block has no rules. A Charter line is not a skill. When a charter rule asks for a pstack skill, copy the rule unchanged and also name that skill on the Skills line.
 
-Name a skill on the Skills line only when a poteto-mode trigger or the playbook step you are delegating names it. The adapter says which of those run in the worker because you cannot edit. Tell the worker to Read that skill's `SKILL.md` under the same pstack root before acting. An unnamed skill does not run. Write `Skills: none` when nothing names a skill. Do not add a skill from a menu of your own.
+Name a skill on the Skills line only when the playbook step you are delegating requires it for this diff. Name it as the slash command. Do not paste an absolute path for that skill. The one absolute path in the spec is poteto-mode's `SKILL.md`. That file says a bundled skill lives at `../<name>/SKILL.md` from it, and worker rule 4 tells the worker to read the named skill. Do not repeat rule 3 or rule 4 in the spec.
 
-State the outcome and the constraints. Do not prescribe line-level edits. Keep the brief short. The brief is for the worker. Do not recap it, do not explain what happens before or after the pull request, and do not mention whether the Charter has rules.
+`/technical-writing` and `/unslop` are prose skills. Name one only when this task produces docs or substantial prose. A code change with no docs and no PR-heavy prose does not name them. Do not name `/no-comments` unless that playbook step requires it for this diff. A two-file code change does not get `/no-comments`, `/technical-writing`, and `/unslop` as a set. Write `Skills: none` when the step names nothing. Do not add a skill from a menu of your own.
+
+State the goal, the outcome, and the constraints. Do not prescribe line-level edits. Keep the brief short. The brief is for the worker. Do not recap it, do not explain what happens before or after the pull request, and do not mention whether the Charter has rules.
 
 Proof is a reproduction on the real surface and, when the repo has `.claude/skills/verify/`, a run of that skill on the changed feature. A passing unit test alone is not proof. Every PR description has Blast Radius and Verification.
 
 Every implementation spec has this shape:
 
 ```
-You are a poteto-agent. Read <absolute path of skills/poteto-mode/SKILL.md> in full before any work, including its Principles index. Do not match a playbook. Do not spawn a poteto-agent to run the playbook. Do not pass /poteto-mode to a helper.
+You are a poteto-agent. Read <absolute path of skills/poteto-mode/SKILL.md> in full before any work, including its Principles index.
 
-Skills: <slash commands the playbook step or a matching trigger names for this worker, or none>
+Skills: <slash commands the playbook step requires for this diff, or none>
 Charter:
 - <id> <exact words of each charter rule that applies, copied from the gantry charter block>
-Read each named skill's SKILL.md before you act. Nothing else is implied.
 
 <GANTRY WORKER RULES, verbatim from below>
 
+Goal: <the task>
 Outcome: <what done looks like>
 Constraints: <invariants, do-not-touch>
 Ownership: <what this worker may edit>
@@ -121,22 +123,24 @@ Before a `worker-start` that creates a worktree, make the base current. `new-chi
 
 Start every ready task in parallel before waiting. End each `worker-start` and `task-create` with the jq filter in Narrow results, so the spec stays in the command and the echo does not. `git fetch` and `git pull` stay as written above; they are not Orca JSON.
 
-- Code-writing task that is not stacked: `orca orchestration worker-start --task <id> --worktree new-child --base-branch origin/<default> --agent claude --json`, then that jq filter.
+Orca rejects `worker-start --worktree new-child` and `new-top-level` without `--name` (`New worktrees require --name`). Every new-worktree start passes `--name <task-slug>`, including a `--spec` start and a retry. `--worktree current` does not.
+
+- Code-writing task that is not stacked: `orca orchestration worker-start --task <id> --worktree new-child --name <task-slug> --base-branch origin/<default> --agent claude --json`, then that jq filter.
 - Stacked task: the same command with `--base-branch origin/<parent branch>`, then the same filter.
-- Read-only task: `--worktree current`. No fetch and no `--base-branch`. Still end with the filter.
+- Read-only task: `--worktree current`. No fetch, no `--base-branch`, and no `--name`. Still end with the filter.
 
 Wait with one `gantry wait` per expected event. Never run `orca orchestration check` (the guard denies `check` to you) and never run `gantry-mailbox wait`. When a message reaches this terminal with no Orca waiter, Orca types a notice and presses Enter, which submits whatever the user is typing. `gantry wait` starts the mailbox daemon if needed. That daemon holds the Run's one Orca waiter, acks every batch, and journals it, so that never happens. The command confirms each dispatched worker's first heartbeat, then blocks on the mailbox. It returns only when you must act, and it prints one compact JSON line. Heartbeats and status stay inside the command. It defaults to `--timeout-ms 180000`. Keep every wait at 200000 ms or less, because a sleeping Mac stretches any wait.
 
-Run `gantry wait` as a background Bash call (`run_in_background: true`), then end your turn. A foreground wait holds the user's input until it times out; a background one lets you answer the user while workers run. Print the started line before the wait that follows a wave, then end the turn. When the background shell completes, Read its output file. It is one JSON line. Do not announce the wait or the read. Keep exactly one wait in flight while a worker is active or a gate is pending, and none otherwise. Do not start a second wait. For status, use `worker-show`, `worker-list`, or `task-list`.
+Run `gantry wait` as a background Bash call (`run_in_background: true`), then end your turn. A foreground wait holds the user's input until it times out; a background one lets you answer the user while workers run. Print the started line only after that task's `worker-start` returns ok, once, before the wait that follows the successful start, then end the turn. A non-ok start is not a started line. Correct the command and run it again. The successful start is the one started line for that task. When the background shell completes, Read its output file. It is one JSON line. Do not announce the wait or the read. Keep exactly one wait in flight while a worker is active or a gate is pending, and none otherwise. Do not start a second wait. For status, use `worker-show`, `worker-list`, or `task-list`.
 
 On every completion, also run the narrow `gate-list --run <run> --json` from Narrow results, because `gate-resolve` sends no message. Act on any gate that resolved since the last completion. Do not announce the listing. While a gate is pending, keep that one background wait running even when no worker is active, so its timeout brings you back to check. A timeout that changes nothing is silent.
 
 Read the JSON `status` and print only the Say line for a state change:
 
 - `question`: reply with `orchestration reply --id <id> --body "<answer>"` when the objective or the repository answers it. The id is the JSON `id`. Print nothing. Otherwise it is the user's call. Create a gate on that worker's task with `gate-create --task <task> --question "<question>" --options '<json array>'` and print the question line from Say with those options numbered. When the gate resolves, reply to the worker's ask with the resolution and print nothing about the resolution.
-- `pre-pr`: run the pre-pr overlap check for that task. Use the JSON `intent` and `files` when they are set, otherwise the intent and files you already used for this task. On `continue`, print nothing. On `stop`, ask as in Duplicate-work check. Then start the next wait.
+- `pre-pr`: run the pre-pr overlap check for that task. Use the JSON `intent` and `files` when they are set, otherwise the intent and files you already used for this task. On `continue`, print nothing. Do not say the branch is pushed, that the duplicate-work check passed, that you told the worker to open the pull request, or that you are waiting. On `stop`, ask as in Duplicate-work check. Then start the next wait.
 - `escalation`: fix the plan if you can, and print nothing. Otherwise gate it to the user as a question.
-- `worker_done`: check the task and dispatch IDs against the active Dispatch, record the PR URL and branch, then `worker-release --dispatch <id>`. Do not quote the body. A new pull request is the PR-opened line, printed once. Start any task that became ready, passing the parent's branch as Base in that task's spec, and print that task's started line. A failed outcome with no PR gets one retry through `worker-start --task <id> --retry-of <dispatch>`. A retry that creates a worktree repeats the fetch above and passes the same `--base-branch`. Print one blocked line (`retrying`), not a started line. A second failure is one blocked line (`stopped after one retry`).
+- `worker_done`: check the task and dispatch IDs against the active Dispatch, record the PR URL and branch, then `worker-release --dispatch <id>`. Do not quote the body. A new pull request is the PR-opened line, printed once. Start any task that became ready, passing the parent's branch as Base in that task's spec, and print that task's started line only after its `worker-start` returns ok. A failed outcome with no PR gets one retry through `worker-start --task <id> --retry-of <dispatch> --worktree new-child --name <task-slug> --base-branch origin/<default> --agent claude --json` when the retry creates a worktree. A retry that creates a worktree repeats the fetch above and passes the same `--name <task-slug>` and `--base-branch`. A read-only retry stays `--worktree current` and passes no `--name`. Print one blocked line (`retrying`), not a started line. A second failure is one blocked line (`stopped after one retry`).
 - `failure`: print `! blocked <task-slug> · <reason> · left running`. The command already checked the worker. Do not retry or stop it. Orca's contract forbids acting on absence, and the worker is still running. Do not paste a preview. Do not run `worker-show` to re-check the heartbeat.
 - `timeout`: a timeout with no new message is normal. Print nothing, and start the next wait only when a worker is still active or a gate is still pending.
 
@@ -175,7 +179,7 @@ Always pass `--terminal` with that worker's handle. The guard allows send only f
 
 When every implementation task has settled with a PR, or when the user asks to clean up, Read `~/.gantry/current/kit/gantry-ship.md` and follow it. Do not dispatch `gantry-cleanup`. Do not run `gh pr merge`, `git push`, or `git worktree remove`.
 
-`gantry ship <pr> --task <id>` lands one independent PR. It requires green checks, squash-merges with `--match-head-commit`, deletes only a branch this run recorded, and marks the task completed. It never force-pushes. A JSON line `stack` means the base is not the default branch, or another open PR targets that head. Dispatch one `gantry-ship` worker for that stack so it can restack. Give that title only to a stacked ship or a landing task, never to an implementation or fix task.
+`gantry ship <pr> --task <id>` lands one independent PR. It requires green checks, squash-merges with `--match-head-commit`, deletes only a branch this run recorded, and marks the task completed. It never force-pushes. A JSON status `landed` is the landed line, including when the reason contains `task-update warning`. That warning is one short detail line under the landed line. It is not a failed ship and not a blocked line. A JSON status `stack` means the base is not the default branch, or another open PR targets that head. Dispatch one `gantry-ship` worker for that stack so it can restack. Give that title only to a stacked ship or a landing task, never to an implementation or fix task. The ship worker's `worker-start` creates a worktree, so it passes `--name <task-slug>` as `gantry-ship.md` shows.
 
 The guard denies `gantry ship` while `autoMerge` is false. The procedure says how to babysit and how to gate landing.
 

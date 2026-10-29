@@ -14,7 +14,7 @@ When `autoMerge` is true, run this once per settled pull request whose base is t
 
 You may chain several of those with `;` in one Bash call. Read each JSON line. What you print for each line is the Say this to the user section. Do not restate the JSON.
 
-- `landed`: checks were green, or the repo has no Actions workflows and no required status checks, so an empty rollup is not a failure. The pull request was squash-merged at that head, and the head was deleted only when this run recorded that branch and it is not the default branch. The task is marked completed.
+- `landed`: checks were green, or the repo has no Actions workflows and no required status checks, so an empty rollup is not a failure. The pull request was squash-merged at that head, and the head was deleted only when this run recorded that branch and it is not the default branch. The command marks the task completed internally with `task-update --id`. You do not run that command. When that update fails, status is still `landed` and the reason includes `task-update warning`. Print the landed line. The warning is one short detail line under it, not a failed ship and not a blocked line. The command exits 0.
 - `blocked`: checks were red, pending, or failing; checks are configured but none registered after a short wait (`checks have not registered`); the pull request was closed unmerged; the head was the default branch; or this run has no record of the pull request. When the reason is `checks have not registered`, run `gantry ship` again. Do not ask and do not start a fix task. Any other blocked reason: do not clean up. Dispatch a fix worker for that pull request. Follow poteto-mode's Bug fix playbook for it. Base is that pull request's branch. Ownership is that pull request only. The fix worker pushes to the same branch. Ship again after it settles.
 - `stack`: the base is not the default branch, or another open pull request targets this head. Do not retry `gantry ship`. Dispatch one ship worker for that stack. See Stacked pull requests.
 - `held`: `autoMerge` is false. You should not have run the command.
@@ -25,12 +25,12 @@ Restack rewrites a child onto the parent's squash and pushes with `--force-with-
 
 Dispatch one worker for the stacked pull requests only, not for the independent ones `gantry ship` already landed:
 
-`orca orchestration worker-start --spec '<spec>' --task-title gantry-ship --worktree new-child --base-branch origin/<default> --agent claude --json`
+`orca orchestration worker-start --spec '<spec>' --task-title gantry-ship --worktree new-child --name <task-slug> --base-branch origin/<default> --agent claude --json`
 
 End with the same jq filter as a code-writing `worker-start`. `<pstack>` is the `GANTRY_PSTACK` path. The spec is:
 
 ```
-You are a poteto-agent. Read <pstack>/skills/poteto-mode/SKILL.md in full before any work, including its Principles index. Do not match a playbook. Do not spawn a poteto-agent to run the playbook. Do not pass /poteto-mode to a helper.
+You are a poteto-agent. Read <pstack>/skills/poteto-mode/SKILL.md in full before any work, including its Principles index.
 Read <pstack>/skills/poteto-mode/playbooks/shipping.md and follow it for this stack. Use playbooks/babysit.md for CI failures and review threads.
 Charter: <as in an implementation spec>
 Land these PRs: <urls, bottom-to-top per stack>
@@ -45,10 +45,10 @@ Give `gantry-ship` only to this worker and to a landing task. A pull request the
 
 Do not run `gantry ship`. The guard denies it, and the command will not merge.
 
-Dispatch one ship worker with this spec:
+Dispatch one ship worker with the same `worker-start` as a stacked ship, including `--worktree new-child` and `--name <task-slug>`. The spec is:
 
 ```
-You are a poteto-agent. Read <pstack>/skills/poteto-mode/SKILL.md in full before any work, including its Principles index. Do not match a playbook. Do not spawn a poteto-agent to run the playbook. Do not pass /poteto-mode to a helper.
+You are a poteto-agent. Read <pstack>/skills/poteto-mode/SKILL.md in full before any work, including its Principles index.
 Read <pstack>/skills/poteto-mode/playbooks/babysit.md and follow it. Do not merge; autoMerge is false and the guard blocks merges.
 Charter: <as in an implementation spec>
 Babysit these PRs to merge-ready, drive mode: <urls>
@@ -66,7 +66,7 @@ Run this when the user asks, including a bare "clean up", and after a landed shi
 2. When the user said to just clean up, run `gantry cleanup --finished`. It acts on every line whose `op` is `remove` or `close`. Do not ask again.
 3. Otherwise run `gantry cleanup <task>` only for tasks the user confirms. Several task ids may go in one command. The confirmation is the question line in Say this to the user.
 
-The command refuses `--force`. It skips a dirty tree, an unmerged branch, commits that are not on the default branch, a running worker, the caller's cwd, and a worktree a live worker is in. A settled worker whose worktree is the main checkout has its terminal closed, and the checkout stays. A released `--worktree current` terminal that worker-list still shows as settled `user_takeover` is closed the same way. A removed or closed task is marked completed, and a settled dispatch is released.
+The command refuses `--force`. It skips a dirty tree, an unmerged branch, commits that are not on the default branch, a running worker, the caller's cwd, and a worktree a live worker is in. A settled worker whose worktree is the main checkout has its terminal closed, and the checkout stays. A released `--worktree current` terminal that worker-list still shows as settled `user_takeover` is closed the same way. A removed or closed task is marked completed internally with the same `task-update --id`, and a settled dispatch is released. You do not run that command. When the update fails, the JSON status is `error`. Run `gantry cleanup` for that task again.
 
 A terminal that worker-list does not show is left open. It may be the operator's.
 

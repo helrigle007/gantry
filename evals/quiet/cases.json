@@ -16,6 +16,7 @@
     "Main current. Starting worker.",
     "Listing decision gates",
     "Before the PR",
+    "Worker's branch is pushed. Duplicate-work check passed, so I told it to open the PR. Waiting on that now.",
     "One background `gantry wait` per expected event",
     "Do not wait on heartbeats yourself"
   ],
@@ -55,7 +56,8 @@
     "Worker confirmed (heartbeat)",
     "Nothing needs your input",
     "Listing decision gates",
-    "no saved rules"
+    "no saved rules",
+    "Worker's branch is pushed. Duplicate-work check passed, so I told it to open the PR. Waiting on that now."
   ],
   "after": [
     "▸ started slug-helper · 1 worker · overlap clear",

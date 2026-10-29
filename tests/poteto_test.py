@@ -93,8 +93,16 @@ def test_adapter_and_prompt():
     assert "You are a poteto-agent" in coordinator
     assert "never spawn a poteto-agent to run the playbook" in coordinator
     assert "Never pass /poteto-mode" in coordinator
-    for line in ("Charter:", "Ownership:", "Base:", "Proof:"):
+    for line in ("Charter:", "Goal:", "Ownership:", "Base:", "Proof:"):
         assert line in coordinator
+    assert "Do not match a playbook" not in coordinator
+    assert "Read each named skill's SKILL.md before you act" not in coordinator
+    assert "worker-start --task <id> --worktree new-child --name <task-slug> --base-branch origin/<default>" in coordinator
+    assert "--retry-of <dispatch> --worktree new-child --name <task-slug>" in coordinator
+    assert "substantial prose" in coordinator
+    assert "two-file code change" in coordinator
+    assert "Worker's branch is pushed. Duplicate-work check passed, so I told it to open the PR. Waiting on that now." in coordinator
+    assert "One started line per task, printed once, only after that task's `worker-start` returns ok." in coordinator
     for gone in (
         "You classify the task",
         "Name one playbook",
@@ -117,11 +125,19 @@ def test_adapter_and_prompt():
         "Base",
         "Proof",
         "Never the Agent tool",
+        "--name <task-slug>",
+        "substantial prose",
+        "../<name>/SKILL.md",
     ):
         assert phrase in adapter, phrase
+    assert "technical-writing for the PR description" not in adapter
     assert "You are a poteto-agent" in ship
+    assert "Do not match a playbook" not in ship
     assert "playbooks/shipping.md" in ship
     assert "playbooks/babysit.md" in ship
+    assert "worker-start --spec '<spec>' --task-title gantry-ship --worktree new-child --name <task-slug>" in ship
+    assert "task-update --id" in ship
+    assert "task-update warning" in ship
 
 
 def main():

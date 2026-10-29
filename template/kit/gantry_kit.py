@@ -2377,7 +2377,7 @@ def stack_reason(view, number, default, opens):
 def mark_completed(task_id):
     if not task_id:
         return False, "no task id"
-    result, err = orca_call("orchestration", "task-update", "--task", task_id, "--status", "completed")
+    result, err = orca_call("orchestration", "task-update", "--id", task_id, "--status", "completed")
     if result is None:
         if "completed" in (err or "").lower():
             return True, "already completed"
@@ -2496,10 +2496,10 @@ def cmd_ship(argv):
     if delete_note:
         reason = f"{reason}; {delete_note}"
     if not ok:
-        reason = f"{reason}; {state_note}"
+        reason = f"{reason}; task-update warning: {state_note}"
     return emit(ship_payload(
         number, "landed", reason, deleted=deleted, state=state_note, **base,
-    ), 0 if ok else 1)
+    ), 0)
 
 
 def worker_path(row):

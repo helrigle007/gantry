@@ -261,7 +261,7 @@ If you abandon a run that already started workers, follow the teardown in `.clau
 
 ### Rerun after the fold
 
-This tree is that fold. 0.3.1 does not change ship or cleanup, and neither does 0.3.2 or 0.4.0. `gantry --version` prints `0.4.0`. An independent pull request is `gantry ship <pr> --task <id>`, then `gantry cleanup`. The coordinator does not dispatch `gantry-ship` or `gantry-cleanup` for that path. A stacked pull request still dispatches one `gantry-ship` worker. `run_has_end` closes the span on an executed `gantry cleanup <task>` or `gantry cleanup --finished`. `gantry cleanup --scan` and `gantry cleanup --dry-run` do not close it. Record the before column on a kit that still dispatches both workers, then install this kit and repeat the loop into a second directory. Each iteration still needs a new suffix, because the earlier runs merged.
+This tree is that fold. 0.3.1 does not change ship or cleanup, and neither does 0.3.2. 0.4.0 keeps the same commands. `gantry ship` marks the task with `task-update --id` and still reports `landed` when that update fails. `gantry --version` prints `0.4.0`. An independent pull request is `gantry ship <pr> --task <id>`, then `gantry cleanup`. The coordinator does not dispatch `gantry-ship` or `gantry-cleanup` for that path. A stacked pull request still dispatches one `gantry-ship` worker. `run_has_end` closes the span on an executed `gantry cleanup <task>` or `gantry cleanup --finished`. `gantry cleanup --scan` and `gantry cleanup --dry-run` do not close it. Record the before column on a kit that still dispatches both workers, then install this kit and repeat the loop into a second directory. Each iteration still needs a new suffix, because the earlier runs merged.
 
 ```sh
 cd "$GANTRY_SRC"

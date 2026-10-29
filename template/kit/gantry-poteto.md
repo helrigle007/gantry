@@ -28,7 +28,7 @@ One poteto-mode spawn is one Orca worker. Then one `gantry wait`, as the coordin
 | --- | --- |
 | Spawn a `poteto-agent`, or call `Task` or `Agent` | `orca orchestration worker-start` with the brief below. Never the Agent tool, Task, Workflow, or Monitor. The guard denies those four in this chat. A denial means you dispatch a worker. Do not retry the tool. |
 | `subagent_type` `poteto-agent` or `pstack:poteto-agent` | The first lines of the worker brief. There is no Agent call to put a subagent type on. |
-| `environment: "cloud"` | `--worktree new-child` and the `--base-branch` the wave section names. |
+| `environment: "cloud"` | `--worktree new-child`, `--name <task-slug>`, and the `--base-branch` the wave section names. Orca rejects a new worktree without `--name`. |
 | `environment: "local"`, or a read-only unit you cannot finish yourself | `--worktree current`. No fetch and no `--base-branch`. |
 | A routed skill that names its own `subagent_type` (`how`, `why`, `interrogate`, `reflect`, `swarm`) | Still one Orca worker. The brief names the skill's `SKILL.md` to Read. Do not override that skill, and do not call Agent to honor its `subagent_type`. |
 | A model slug | Omit it. The worker is `--agent claude`. |
@@ -42,11 +42,13 @@ Do not open `skills/poteto-mode/playbooks/orchestrate.md` and do not run anythin
 
 ## Skills that need the diff
 
-You have no edit tools. A poteto-mode trigger that reads or changes the diff, the commit, or the PR body runs in the worker. Name that skill on the Skills line. When the trigger matches, that includes deslop before commit, no-comments before review, unslop for prose the worker writes, and technical-writing for the PR description. `/interrogate` goes on the same line when its trigger matches. Do not name a skill whose trigger did not match. Do not drop one that did. The worker Reads that skill's `SKILL.md` under `<pstack>` before it acts.
+You have no edit tools. Name a skill on the Skills line only when the playbook step you are delegating requires it for this diff. Name the slash command. Do not paste an absolute path for it. The brief's one absolute path is poteto-mode's `SKILL.md`. That file says a bundled skill lives at `../<name>/SKILL.md` from it. Worker rule 4 tells the worker to read the named skill. Do not repeat that rule in the spec.
+
+`/technical-writing` and `/unslop` are prose skills. Name one only when this task produces docs or substantial prose. A two-file code change with no docs and no PR-heavy prose does not name them, and it does not name `/no-comments` unless that playbook step requires `/no-comments` for this diff. Do not treat "before review" or "PR description" as a reason to add all three. `/deslop` and `/interrogate` go on the line only when that same step requires them for this diff.
 
 ## What every brief still carries
 
-Poteto-mode does not know the charter, the branch, or which paths this worker may edit. Every brief has the poteto-agent lines, the Skills line, Charter, the gantry worker rules, Outcome, Constraints, Ownership, Base, and Proof. Copy every charter rule. Write `Charter: none` only when there are no rules. Write `Skills: none` only when no trigger and no playbook step names a skill for this worker.
+Poteto-mode does not know the charter, the branch, or which paths this worker may edit. Every brief has the poteto-agent line that names poteto-mode's `SKILL.md` by absolute path, the Skills line, Charter, the gantry worker rules, Goal, Outcome, Constraints, Ownership, Base, and Proof. Copy every charter rule. Write `Charter: none` only when there are no rules. Write `Skills: none` only when the playbook step names nothing for this diff. Do not repeat worker rule 3 or rule 4 above the rules block. Rule 3 already says the worker does not match a playbook, does not spawn a poteto-agent to run the playbook, and does not pass `/poteto-mode` to a helper.
 
 Inside a worker, Claude Code's Agent tool stays allowed for parallel work on that one task. The worker rules forbid passing `/poteto-mode` to those helpers, and they forbid spawning a poteto-agent to run the playbook. They do not forbid the Agent tool. A worker never creates an Orca Run, task, or worker.
 
