@@ -83,6 +83,8 @@ Branch protection and rulesets on a private repo on the free plan return HTTP 40
 
 ## pstack 0.9.45
 
+Gantry 0.4.0 does not vendor pstack. The coordinator reads the newest installed copy, usually `~/.claude/plugins/cache/cursor-plugins/pstack/<version>/`, via `template/kit/gantry-poteto.md`. The notes below are a record of the 0.9.45 measurement.
+
 Path: `~/.claude/plugins/cache/pstack-claude/pstack/0.9.45/skills/poteto-mode/`.
 
 - `poteto-mode`: routes each task to a playbook. It names "Opening a PR" as the end of every playbook.

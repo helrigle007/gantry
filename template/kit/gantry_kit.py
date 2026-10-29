@@ -24,7 +24,7 @@ try:
 except ImportError:  # pragma: no cover
     fcntl = None
 
-VERSION = "0.3.2"
+VERSION = "0.4.0"
 AGENT_NAME = "gantry-coordinator"
 HOOK_MARK = ".gantry/current/kit/"
 RUN_EVENTS = ("PreCompact", "SessionStart", "UserPromptSubmit")
@@ -843,10 +843,87 @@ def probe_verdict(hook_cmd, timeout, command, repo, env):
     return None
 
 
+PSTACK_ENV = "GANTRY_PSTACK"
+PSTACK_NOTICE_ENV = "GANTRY_PSTACK_NOTICE"
+PSTACK_TESTED = "0.15.36"
+BLOCKED_PSTACK = "! blocked run · pstack not installed · stopped"
+
+
+def _version_key(name):
+    text = name[1:] if name.startswith("v") and len(name) > 1 and name[1].isdigit() else name
+    parts = []
+    for part in text.split("."):
+        if not part.isdigit():
+            return ()
+        parts.append(int(part))
+    return tuple(parts)
+
+
+def pstack_roots(home_dir=None):
+    base = home_dir or os.path.expanduser("~")
+    pattern = os.path.join(base, ".claude", "plugins", "cache", "*", "pstack", "*", "skills", "poteto-mode")
+    roots = []
+    for skill in glob.glob(pattern):
+        if os.path.isdir(skill):
+            roots.append(os.path.abspath(os.path.dirname(os.path.dirname(skill))))
+    return roots
+
+
+def pstack_root(home_dir=None, need_skill=False):
+    """Newest installed pstack root.
+
+    Version is the dotted numeric directory name. `cursor-plugins` wins a tie.
+    `need_skill` requires `skills/poteto-mode/SKILL.md`, which the session follows.
+    Install only needs the `poteto-mode` directory.
+    """
+    ranked = []
+    for root in pstack_roots(home_dir):
+        skill = os.path.join(root, "skills", "poteto-mode", "SKILL.md")
+        if need_skill and not os.path.isfile(skill):
+            continue
+        market = os.path.basename(os.path.dirname(os.path.dirname(root)))
+        prefer = 1 if market == "cursor-plugins" else 0
+        ranked.append((_version_key(os.path.basename(root)), prefer, root))
+    if not ranked:
+        return None
+    ranked.sort()
+    return ranked[-1][2]
+
+
+def pstack_notice(installed, tested=None):
+    """One quiet line when the installed pstack is newer than the tested release.
+
+    Equal and older versions return None. The caller continues either way.
+    """
+    tested = PSTACK_TESTED if tested is None else tested
+    if _version_key(installed) > _version_key(tested):
+        return f"! pstack {installed} newer than tested {tested} · continuing"
+    return None
+
+
+def bind_pstack(home_dir=None):
+    """Export GANTRY_PSTACK when SKILL.md is installed, otherwise clear it.
+
+    GANTRY_PSTACK_NOTICE is set only when that copy is newer than PSTACK_TESTED.
+    """
+    root = pstack_root(home_dir, need_skill=True)
+    if root:
+        os.environ[PSTACK_ENV] = root
+        notice = pstack_notice(os.path.basename(root))
+        if notice:
+            os.environ[PSTACK_NOTICE_ENV] = notice
+        else:
+            os.environ.pop(PSTACK_NOTICE_ENV, None)
+        return root
+    os.environ.pop(PSTACK_ENV, None)
+    os.environ.pop(PSTACK_NOTICE_ENV, None)
+    return None
+
+
 def require_tools():
     if shutil.which("orca") is None:
         die("orca CLI not on PATH")
-    if not glob.glob(os.path.expanduser("~/.claude/plugins/cache/*/pstack/*/skills/poteto-mode")):
+    if pstack_root() is None:
         die("pstack plugin not installed")
 
 
@@ -994,6 +1071,9 @@ def cmd_uninstall(argv):
 def cmd_doctor(argv):
     repo = argv[0] if argv else "."
     print(f"version: {VERSION}")
+    found_pstack = pstack_root()
+    print("pstack: " + (found_pstack if found_pstack else "not installed"))
+    print(f"pstack tested: {PSTACK_TESTED}")
     current = os.path.join(home(), "current")
     print(f"kit: {current}" + (f" -> {os.path.realpath(current)}" if os.path.lexists(current) else " (missing)"))
     failure = registry_failure()
@@ -1797,6 +1877,7 @@ def autocompact_arg():
 def exec_claude(argv):
     os.environ["GANTRY_COORDINATOR"] = "1"
     os.environ["GANTRY_COORDINATOR_HANDLE"] = os.environ["ORCA_TERMINAL_HANDLE"]
+    bind_pstack()
     os.execvp("claude", [
         "claude", *argv, *autocompact_arg(),
         "--agent", AGENT_NAME, "--dangerously-skip-permissions",

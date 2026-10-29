@@ -71,6 +71,9 @@ def case_agent_brief(_fx):
         ("tui-idle" in text, "relay waits for tui-idle"),
         ("worker-start --spec" in text, "new tasks stay worker-start"),
         ("/poteto-mode\nPlaybook:" not in text, "specs do not open with /poteto-mode"),
+        ("gantry-poteto.md" in text and "You are a poteto-agent" in text, "briefs are poteto-agents via the adapter"),
+        ("You classify the task" not in text and "Name one playbook" not in text, "coordinator does not classify the playbook"),
+        ("! blocked run · pstack not installed · stopped" in text, "missing pstack stops"),
         ("AskUserQuestion" in front, "agent tools include AskUserQuestion"),
         ("## Narrow results" in text and "Orca has no `--jq`" in text, "agent narrows orca output with jq"),
         ("--limit 8" in text and "--limit 40" not in text, "worker-read cap is 8"),
@@ -107,7 +110,7 @@ def case_refresh_and_current(fx):
         (refreshed.returncode == 0, refreshed.stderr),
         ("refreshed ~/.gantry" in refreshed.stdout, refreshed.stdout),
         ("no PR opened" in refreshed.stdout, "update opens no PR"),
-        ("0.3.2 -> 0.3.2" in refreshed.stdout, refreshed.stdout),
+        ("0.4.0 -> 0.4.0" in refreshed.stdout, refreshed.stdout),
         (not os.path.exists(fx.gh_log), "gh was not called"),
         (again.returncode == 0 and "already matches the template" in again.stdout, again.stdout),
         (fx.git("rev-parse", "HEAD") == head, "operator HEAD unchanged"),
@@ -140,7 +143,7 @@ def case_tag(fx):
     os.makedirs(os.path.join(source, "bin"))
     shutil.copy(GANTRY, os.path.join(source, "bin", "gantry"))
     kit = os.path.join(source, "template", "kit", "gantry_kit.py")
-    write(kit, read(kit).replace('VERSION = "0.3.2"', 'VERSION = "9.9.9"', 1))
+    write(kit, read(kit).replace('VERSION = "0.4.0"', 'VERSION = "9.9.9"', 1))
     subprocess.run(["git", "init", "-q", "-b", "main", source], check=True)
     subprocess.run(["git", "-C", source, "-c", "user.name=t", "-c", "user.email=t@example.com", "add", "template", "bin"], check=True)
     subprocess.run(["git", "-C", source, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "-m", "tag me"], check=True)

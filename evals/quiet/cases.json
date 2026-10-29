@@ -4,6 +4,7 @@
     "▸ PR #N opened · overlap clear · checks running",
     "✓ landed #N · squash-merged · cleaned up",
     "! blocked #N · <short reason> · <what happens next>",
+    "! pstack <installed> newer than tested 0.15.36 · continuing",
     "? <question>"
   ],
   "forbids": [

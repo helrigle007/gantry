@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.0
+
+- The coordinator is the `/pstack:poteto-mode` chat. Poteto-mode matches the playbook, the todo list, and the skills. Gantry no longer classifies those itself.
+- `template/kit/gantry-poteto.md` maps each poteto-agent spawn to an Orca worker (`orca orchestration worker-start`, then `gantry wait`). The worker is briefed as a poteto-agent and reads the installed `SKILL.md` by absolute path. It does not run the playbook. pstack is not copied into this repo or into the target repo.
+- The launcher sets `GANTRY_PSTACK` to the newest installed plugin that has `skills/poteto-mode/SKILL.md`, usually `~/.claude/plugins/cache/cursor-plugins/pstack/<version>/`. When that file is missing, the coordinator prints `! blocked run · pstack not installed · stopped` and does not start a Run.
+- This release was tested against pstack 0.15.36 (`PSTACK_TESTED` in the kit). A newer installed copy prints `! pstack <installed> newer than tested 0.15.36 · continuing` once, then continues. An equal or older copy prints nothing.
+- Every brief still carries the charter, ownership, base, and proof. Overlap, ship, cleanup, quiet mode, `gantry wait`, and the guard are unchanged. The coordinator still has no edit tools and no Agent tool. A worker may still use Claude Code subagents inside its own task.
+- `gantry --version` prints `0.4.0`.
+
 ## 0.3.2
 
 - `gantry wait` confirms each dispatched worker's first heartbeat and then waits on the mailbox, in one blocking call. It prints one JSON line and returns when the coordinator must act: a question, a pre-pr request, an escalation, a worker_done, a failure, or a timeout. Heartbeats and status stay inside the command.

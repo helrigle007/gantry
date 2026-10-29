@@ -8,7 +8,7 @@ def claude_project(repo):
     return os.path.expanduser(os.path.join("~/.claude/projects", slug))
 MARK = "Background-wait timing test"
 OBJECTIVE = f"""{MARK}, one task, no PR, no ship worker.
-Task: an Investigation playbook worker in --worktree current. It sends its first heartbeat, then runs exactly one Bash command: python3 -c "import time; time.sleep(180)". Then it sends worker_done --outcome succeeded with the output of `git log --oneline -3`. It edits nothing and opens no PR.
+Task: one read-only worker in --worktree current. It sends its first heartbeat, then runs exactly one Bash command: python3 -c "import time; time.sleep(180)". Then it sends worker_done --outcome succeeded with the output of `git log --oneline -3`. It edits nothing and opens no PR.
 Answer any user message that contains PING with one line that starts with PING-REPLY and names the current UTC time from `date -u +%H:%M:%S`."""
 
 
