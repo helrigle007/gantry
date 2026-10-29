@@ -8,3 +8,5 @@ Worker confirmed (heartbeat). Waiting for next messages.
 The worker checked in and is working on the slug task. Nothing needs your input.
 Listing decision gates for the run.
 Worker's branch is pushed. Duplicate-work check passed, so I told it to open the PR. Waiting on that now.
+The worker is building the change now. Next update is when the PR opens.
+The duplicate-work check passed, so the worker is opening the PR now.

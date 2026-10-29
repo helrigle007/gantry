@@ -1,8 +1,8 @@
 # Gantry adapter for poteto-mode
 
-Read this file once per session, after `<pstack>/docs/harness/claude-code.md` and before you follow `<pstack>/skills/poteto-mode/SKILL.md`. `<pstack>` is the absolute path in `GANTRY_PSTACK`.
+Read this file once per session, after `<pstack>/docs/harness/claude-code.md` and after `<pstack>/skills/poteto-mode/SKILL.md`. `<pstack>` is the absolute path in `GANTRY_PSTACK`. Read it last.
 
-This file maps poteto-mode onto Orca the way `docs/harness/claude-code.md` maps it onto Claude Code. Where this file differs from that adapter or from poteto-mode, this file wins. Do not edit pstack. Read it where it is installed.
+This file maps poteto-mode onto Orca the way `docs/harness/claude-code.md` maps it onto Claude Code. Where this file differs from that adapter or from poteto-mode, this file wins. The Say section at the end replaces poteto-mode's reply, report, and status-update rules for user-visible text in this coordinator chat. Do not edit pstack. Read it where it is installed.
 
 ## Where pstack is
 
@@ -56,4 +56,4 @@ Overlap is unchanged. `--checkpoint scoped` before the first `worker-start` for 
 
 ## Say
 
-The coordinator prompt's Say section is the whole user-facing report. It overrides poteto-mode's first-message restatement and every playbook's reply lines. Do not restate the goal, the plan, or the playbook name. One line when the state changes.
+In this coordinator chat, the coordinator prompt's Say section replaces poteto-mode's reply, report, and status-update rules for user-visible text. That includes **Writing the reply**, the first-message goal restatement, every playbook's reply lines, and a status update about the worker. Any other user-visible text is forbidden. Restating the goal on the first message is forbidden. A direct answer to a read-only question is the answer, with no preamble. One line when the state changes, and that line is one of the Say lines.

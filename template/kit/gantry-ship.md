@@ -80,8 +80,9 @@ The coordinator prompt's Say section is the whole user-facing report. Do not res
 ? <question>
 ```
 
-- After `landed`, and cleanup for that task has finished: `✓ landed #N · squash-merged · cleaned up`. That line is the whole report. One short detail line under it, indented two spaces, only when something unexpected happened.
-- After `landed`, when this procedure does not clean up: `✓ landed #N · squash-merged · left in place`.
+- After `landed`, and cleanup's JSON `status` is `removed`: `✓ landed #N · squash-merged · cleaned up`. That line is the whole report. `removed` is the worktree path. One short detail line under it, indented two spaces, only for a `task-update warning`.
+- After `landed`, when cleanup ran and did not remove the worktree (`status` is `closed` or `skipped`, or `removed` is empty): `! blocked #N · worktree left · <path or no record>`. Do not print `cleaned up`. Do not add a sentence after the line.
+- After `landed`, when this procedure does not run cleanup: `✓ landed #N · squash-merged · left in place`.
 - `blocked`, other than `checks have not registered`: `! blocked #N · <short reason> · <what happens next>`, then the fix task this file already specifies. Do not explain the playbook. `checks have not registered` retries `gantry ship` with no line. Print the blocked line only if that retry stays blocked.
 - `stack`: the started line for the ship worker. No landed line, and no paragraph about restack.
 - autoMerge false: `? PRs are merge-ready and autoMerge is false. Land them?` then `1. Land (set autoMerge true first)` and `2. Hold`.

@@ -1345,34 +1345,85 @@ def explicit_branch(row):
     return ""
 
 
-def worker_checkout(row):
+PATH_KEYS = ("worktreePath", "worktree", "cwd", "path", "workspacePath", "checkoutPath")
+NAME_KEYS = ("worktreeName", "workspaceName", "name")
+
+
+def record_nodes(row):
     if not isinstance(row, dict):
-        return ""
+        return [], []
     nodes = [row]
+    named = []
     for key in ("resource", "terminal", "workspace", "dispatch"):
         node = as_dict(row.get(key))
         if node:
             nodes.append(node)
+            if key in ("resource", "workspace"):
+                named.append(node)
     projection = as_dict(row.get("projection"))
     if projection:
+        nodes.append(projection)
         workspace = as_dict(projection.get("workspace"))
         if workspace:
             nodes.append(workspace)
+            named.append(workspace)
+    return nodes, named
+
+
+def path_text(value):
+    if not isinstance(value, str) or not value.strip():
+        return ""
+    return os.path.realpath(os.path.expanduser(value.strip()))
+
+
+def named_checkout(repo_root, name):
+    if not repo_root or not isinstance(name, str):
+        return ""
+    name = name.strip()
+    if not name or name in {".", ".."} or "/" in name or "\\" in name or name.startswith("-"):
+        return ""
+    base = os.path.basename(os.path.realpath(repo_root))
+    candidate = os.path.join(os.path.expanduser("~"), "orca", "workspaces", base, name)
+    if os.path.isdir(candidate):
+        return os.path.realpath(candidate)
+    return ""
+
+
+def worker_path(row, repo_root=None):
+    """Path of this worker's checkout.
+
+    Current Orca omits worktreePath on a worker-start --name row. The checkout
+    is still ~/orca/workspaces/<repo>/<name>, and a path may sit on a nested
+    workspace or resource field instead of the row.
+    """
+    nodes, named = record_nodes(row)
+    recorded = ""
     for node in nodes:
-        for key in ("worktreePath", "worktree", "cwd", "path"):
-            value = node.get(key)
-            if isinstance(value, str) and value.strip():
-                path = os.path.realpath(os.path.expanduser(value.strip()))
-                if os.path.isdir(path):
-                    return path
+        for key in PATH_KEYS:
+            path = path_text(node.get(key))
+            if path and os.path.isdir(path):
+                return path
+            if path and not recorded:
+                recorded = path
         for key in ("worktreeId", "worktree_id"):
             value = node.get(key)
             if isinstance(value, str) and "::" in value:
-                suffix = value.split("::", 1)[1]
-                if suffix:
-                    path = os.path.realpath(os.path.expanduser(suffix))
-                    if os.path.isdir(path):
-                        return path
+                path = path_text(value.split("::", 1)[1])
+                if path and os.path.isdir(path):
+                    return path
+    if repo_root:
+        for node in named:
+            for key in NAME_KEYS:
+                found = named_checkout(repo_root, node.get(key))
+                if found:
+                    return found
+    return recorded
+
+
+def worker_checkout(row, repo_root=None):
+    path = worker_path(row, repo_root)
+    if path and os.path.isdir(path):
+        return path
     return ""
 
 
@@ -1458,7 +1509,7 @@ def current_work(repo, run, task):
             dispatch = dispatch_id_of(row)
             if dispatch:
                 ids.add(dispatch)
-            for name in (explicit_branch(row), recorded_branch(row.get("result")), checkout_branch(worker_checkout(row))):
+            for name in (explicit_branch(row), recorded_branch(row.get("result")), checkout_branch(worker_checkout(row, repo))):
                 if name:
                     branches.add(name)
     if not known:
@@ -2502,22 +2553,53 @@ def cmd_ship(argv):
     ), 0)
 
 
-def worker_path(row):
-    for key in ("worktreePath", "worktree", "cwd", "path"):
-        value = row.get(key)
-        if isinstance(value, str) and value.strip():
-            return os.path.realpath(os.path.expanduser(value.strip()))
+def worktree_for_branch(repo, branch):
+    if not repo or not branch:
+        return ""
+    try:
+        code, out, err = invoke(["git", "-C", repo, "worktree", "list", "--porcelain"])
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    if code != 0:
+        return ""
+    current = ""
+    root = os.path.realpath(repo)
+    for line in out.splitlines():
+        if line.startswith("worktree "):
+            current = path_text(line[len("worktree "):])
+            continue
+        if line.startswith("branch ") and current:
+            ref = line[len("branch "):].strip()
+            name = ref[len("refs/heads/"):] if ref.startswith("refs/heads/") else ref
+            if name == branch and current != root and os.path.isdir(current):
+                return current
+            current = ""
     return ""
 
 
-def live_paths(workers):
+def branch_of_task(task_id, workers, run):
+    for row in workers:
+        for name in (explicit_branch(row), recorded_branch(row.get("result"))):
+            if name and name != "none":
+                return name
+    if not run:
+        return ""
+    for rec in load_records(run, []):
+        if rec.get("task") == task_id and rec.get("branch"):
+            return rec["branch"]
+    return ""
+
+
+def live_paths(workers, repo_root):
     found = set()
     for row in workers:
         if row.get("dispatchStatus") in SETTLED_STATUS:
             continue
-        path = worker_path(row)
-        if path:
-            found.add(path)
+        path = worker_path(row, repo_root)
+        if not path:
+            path = worktree_for_branch(repo_root, branch_of_task(row.get("taskId") or "", [row], row.get("_run") or ""))
+        if path and os.path.isdir(path):
+            found.add(os.path.realpath(path))
     return found
 
 
@@ -2588,7 +2670,12 @@ def plan_cleanup(task_id, workers, ctx, cwd, live):
         if dispatch and dispatch not in dispatches:
             dispatches.append(dispatch)
         if not path:
-            path = worker_path(row)
+            path = worker_path(row, ctx["root"])
+    if not path or not os.path.isdir(path):
+        run = next((row.get("_run") for row in workers if row.get("_run")), "")
+        listed = worktree_for_branch(ctx["root"], branch_of_task(task_id, workers, run))
+        if listed:
+            path = listed
     if path and path in live:
         return {"task": task_id, "op": "skip", "reason": "worktree of a worker that is still running", "path": path, "handles": [], "dispatches": []}
     if path and os.path.realpath(path) == ctx["root"]:
@@ -2600,12 +2687,12 @@ def plan_cleanup(task_id, workers, ctx, cwd, live):
             return {
                 "task": task_id,
                 "op": "close",
-                "reason": "worktree already gone" if path else "no worktree",
+                "reason": "worktree already gone" if path else "no worktree record",
                 "path": path,
                 "handles": handles,
                 "dispatches": dispatches,
             }
-        return {"task": task_id, "op": "skip", "reason": "no worktree", "path": "", "handles": [], "dispatches": []}
+        return {"task": task_id, "op": "skip", "reason": "no worktree record", "path": "", "handles": [], "dispatches": []}
     try:
         code, out, err = invoke(["git", "-C", path, "status", "--porcelain"])
     except (OSError, subprocess.TimeoutExpired) as exc:
@@ -2710,7 +2797,7 @@ def cmd_cleanup(argv):
         chosen = sorted(by_task)
     else:
         chosen = tasks
-    live = live_paths(workers)
+    live = live_paths(workers, ctx["root"])
     code = 0
     for task_id in chosen:
         rows = by_task.get(task_id) or []

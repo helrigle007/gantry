@@ -9,7 +9,8 @@
 - Every brief still carries the charter, goal, outcome, constraints, ownership, base, and proof. The brief names poteto-mode's `SKILL.md` once, by absolute path, and names any other skill as a slash command only when the playbook step requires it for this diff. Prose skills are named only when the task produces docs or substantial prose. The worker rules are not repeated above that block. Overlap, `gantry wait`, and the guard are unchanged. The coordinator still has no edit tools and no Agent tool. A worker may still use Claude Code subagents inside its own task.
 - Every `worker-start` that creates a worktree passes `--name <task-slug>`, including a retry and the ship worker. The started line is printed once, after that start returns ok.
 - `gantry ship` marks the task completed with `orca orchestration task-update --id`. A pull request that squash-merged still exits 0 with status `landed` when that update fails. The failure is a `task-update warning` in the reason, and the coordinator still prints the landed line. `gantry cleanup` uses the same `--id` call. A failed update there stays an error so a later cleanup can finish the state change.
-- A pre-pr overlap check that continues is silent. The coordinator does not narrate the push, the check, or the wait.
+- A pre-pr overlap check that continues is silent. In the coordinator chat, the Say section replaces poteto-mode's reply, report, and status-update rules. Any other user-visible text is forbidden, including a restated goal on the first message.
+- `gantry cleanup` finds a `worker-start --name` worktree from a nested path field, from `~/orca/workspaces/<repo>/<name>`, or from `git worktree list` on the task branch. The landed line says `cleaned up` only when that removal happened. Otherwise it is `! blocked #N · worktree left · <path or no record>`.
 - `gantry --version` prints `0.4.0`.
 
 ## 0.3.2

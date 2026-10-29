@@ -850,6 +850,67 @@ def test_ship_merge_argv_is_squash_at_the_verified_head():
         tmp.cleanup()
 
 
+def test_worker_path_reads_a_name_directory_and_a_nested_id():
+    tmp, fx = world()
+    saved_home = os.environ.get("HOME")
+    try:
+        home = os.path.join(fx.tmp, "home")
+        os.environ["HOME"] = home
+        name = "add-hello"
+        named = os.path.join(home, "orca", "workspaces", os.path.basename(fx.repo), name)
+        os.makedirs(named)
+        assert kit.worker_path({"resource": {"name": name}}, fx.repo) == os.path.realpath(named)
+        assert kit.worker_path({"taskId": "task_slug"}, fx.repo) == ""
+        via_id = kit.worker_path({"resource": {"worktreeId": "repo-1::" + fx.wt}}, fx.repo)
+        assert via_id == os.path.realpath(fx.wt)
+    finally:
+        if saved_home is None:
+            os.environ.pop("HOME", None)
+        else:
+            os.environ["HOME"] = saved_home
+        tmp.cleanup()
+
+
+def test_cleanup_removes_the_linked_worktree_when_the_row_has_no_path():
+    tmp, fx = world()
+    try:
+        fx.merged_heads.add("feat/slug")
+        fx.workers = [{
+            "taskId": "task_slug",
+            "dispatchStatus": "completed",
+            "agentTerminalHandle": "term_impl",
+            "dispatchId": "ctx_impl",
+        }]
+        code, lines, _err = fx.cleanup(["task_slug", "--run", "run_1"])
+        assert code == 0, lines
+        assert lines[0]["status"] == "removed", lines
+        assert lines[0]["removed"] == os.path.realpath(fx.wt)
+        assert not os.path.exists(fx.wt)
+    finally:
+        tmp.cleanup()
+
+
+def test_cleanup_does_not_report_removed_without_a_worktree():
+    tmp, fx = world()
+    try:
+        git(fx.repo, "worktree", "remove", fx.wt)
+        fx.workers = [{
+            "taskId": "task_slug",
+            "dispatchStatus": "completed",
+            "agentTerminalHandle": "term_impl",
+            "dispatchId": "ctx_impl",
+        }]
+        code, lines, _err = fx.cleanup(["task_slug", "--run", "run_1"])
+        assert code == 0, lines
+        assert lines[0]["status"] == "closed", lines
+        assert lines[0]["removed"] == ""
+        assert lines[0]["reason"] == "no worktree record"
+        assert lines[0]["closed"] == ["term_impl"]
+        assert lines[0]["path"] == ""
+    finally:
+        tmp.cleanup()
+
+
 if __name__ == "__main__":
     test_ship_lands_a_green_owned_pr()
     test_ship_stays_landed_when_task_update_fails()
@@ -873,4 +934,7 @@ if __name__ == "__main__":
     test_cleanup_finished_removes_and_a_close_error_still_updates_state()
     test_cleanup_retries_state_when_the_worktree_is_already_gone()
     test_cleanup_skips_its_own_terminal_and_still_removes()
-    print("22/22 passed")
+    test_worker_path_reads_a_name_directory_and_a_nested_id()
+    test_cleanup_removes_the_linked_worktree_when_the_row_has_no_path()
+    test_cleanup_does_not_report_removed_without_a_worktree()
+    print("25/25 passed")

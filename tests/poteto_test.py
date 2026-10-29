@@ -101,7 +101,9 @@ def test_adapter_and_prompt():
     assert "--retry-of <dispatch> --worktree new-child --name <task-slug>" in coordinator
     assert "substantial prose" in coordinator
     assert "two-file code change" in coordinator
-    assert "Worker's branch is pushed. Duplicate-work check passed, so I told it to open the PR. Waiting on that now." in coordinator
+    assert "replaces poteto-mode's reply, report, and status-update rules" in coordinator
+    assert "Any other user-visible text is forbidden" in coordinator
+    assert "worktree left" in coordinator
     assert "One started line per task, printed once, only after that task's `worker-start` returns ok." in coordinator
     for gone in (
         "You classify the task",
@@ -128,6 +130,8 @@ def test_adapter_and_prompt():
         "--name <task-slug>",
         "substantial prose",
         "../<name>/SKILL.md",
+        "replaces poteto-mode's reply, report, and status-update rules",
+        "Read it last",
     ):
         assert phrase in adapter, phrase
     assert "technical-writing for the PR description" not in adapter
